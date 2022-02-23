@@ -1,0 +1,1443 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "headers"
+   },
+   "source": [
+    "Project: /overview/_project.yaml\n",
+    "Book: /overview/_book.yaml\n",
+    "\n",
+    "<link rel=\"stylesheet\" href=\"/site-assets/css/style.css\">\n",
+    "\n",
+    "<!-- DO NOT EDIT! Automatically generated file. -->\n",
+    "\n",
+    "\n"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "qFdPvlXBOdUN"
+   },
+   "source": [
+    "# tf.data API로 성능 향상하기"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "MfBg1C5NB3X0"
+   },
+   "source": [
+    "<table class=\"tfo-notebook-buttons\" align=\"left\">\n",
+    "  <td>\n",
+    "    <a target=\"_blank\" href=\"https://www.tensorflow.org/guide/data_performance\"><img src=\"https://www.tensorflow.org/images/tf_logo_32px.png\" />TensorFlow.org에서 보기</a>\n",
+    "  </td>\n",
+    "  <td>\n",
+    "    <a target=\"_blank\" href=\"https://colab.research.google.com/github/tensorflow/docs-l10n/blob/master/site/ko/guide/data_performance.ipynb\"><img src=\"https://www.tensorflow.org/images/colab_logo_32px.png\" />구글 코랩(Colab)에서 실행하기</a>\n",
+    "  </td>\n",
+    "  <td>\n",
+    "    <a target=\"_blank\" href=\"https://github.com/tensorflow/docs-l10n/blob/master/site/ko/guide/data_performance.ipynb\"><img src=\"https://www.tensorflow.org/images/GitHub-Mark-32px.png\" />깃허브(GitHub) 소스 보기</a>\n",
+    "  </td>\n",
+    "  <td>\n",
+    "    <a href=\"https://storage.googleapis.com/tensorflow_docs/docs-l10n/site/ko/guide/data_performance.ipynb\"><img src=\"https://www.tensorflow.org/images/download_logo_32px.png\" />Download notebook</a>\n",
+    "  </td>\n",
+    "</table>"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "rRtNNG8BzISg"
+   },
+   "source": [
+    "Note: 이 문서는 텐서플로 커뮤니티에서 번역했습니다. 커뮤니티 번역 활동의 특성상 정확한 번역과 최신 내용을 반영하기 위해 노력함에도\n",
+    "불구하고 [공식 영문 문서](https://www.tensorflow.org/?hl=en)의 내용과 일치하지 않을 수 있습니다.\n",
+    "이 번역에 개선할 부분이 있다면\n",
+    "[tensorflow/docs-l10n](https://github.com/tensorflow/docs-l10n/) 깃헙 저장소로 풀 리퀘스트를 보내주시기 바랍니다.\n",
+    "문서 번역이나 리뷰에 참여하려면\n",
+    "[docs-ko@tensorflow.org](https://groups.google.com/a/tensorflow.org/forum/#!forum/docs-ko)로\n",
+    "메일을 보내주시기 바랍니다."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "xHxb-dlhMIzW"
+   },
+   "source": [
+    "## 개요\n",
+    "\n",
+    "GPU와 TPU는 하나의 학습 단계를 실행하는데 필요한 시간을 급격하게 줄일 수 있습니다. 최대 성능을 위해서는 현재 단계가 종료되기 전에 다음 스텝의 데이터를 운반하는 효율적인 입력 파이프라인이 필요합니다.`tf.data` API는 유연하고 효율적인 입력 파이프라인을 만드는데 도움이 됩니다. 이 문서는 다양한 모델과 가속기에서 고성능의 텐서플로 입력 파이프라인을 만드는 방법과 `tf.data` API의 특정을 설명합니다.\n",
+    "\n",
+    "진행하기 전에, `tf.data` API 사용법을 익히려면 \"[텐서플로 입력 파이프라인 빌드하기](./data.ipynb)\" 가이드를 읽으십시오."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "UhNtHfuxCGVy"
+   },
+   "source": [
+    "## 참고 자료\n",
+    "\n",
+    "* [텐서플로 입력 파이프라인 빌드하기](./data.ipynb)\n",
+    "* `tf.data.Dataset` API"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "MUXex9ctTuDB"
+   },
+   "source": [
+    "## 설정"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 2,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2020-09-23T03:56:59.835069Z",
+     "iopub.status.busy": "2020-09-23T03:56:59.834464Z",
+     "iopub.status.idle": "2020-09-23T03:57:06.064848Z",
+     "shell.execute_reply": "2020-09-23T03:57:06.064223Z"
+    },
+    "id": "IqR2PQG4ZaZ0"
+   },
+   "outputs": [],
+   "source": [
+    "import tensorflow as tf\n",
+    "\n",
+    "import time"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "QthTHCKF-jKD"
+   },
+   "source": [
+    "전반적인 가이드에서는 데이터셋을 반복하고 성능을 측정합니다.\n",
+    "재현 가능한 성능 벤치마크를 만드는 것은 그것에 영향을 미치는 다른 요인들로 인해 어려울 수 있습니다. 그 요인들로는:\n",
+    "\n",
+    "- 현재 CPU 로드,\n",
+    "- 네트워크 트래픽,\n",
+    "- 캐시와 같은 복잡한 메커니즘 등이 있습니다.\n",
+    "\n",
+    "따라서 재현 가능한 벤치마크를 제공하기 위해 인공 예제를 빌드합니다."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "3bU5gsSI-jKF"
+   },
+   "source": [
+    "### 데이터셋\n",
+    "\n",
+    "`tf.data.Dataset`에서 상속하여 `ArtificialDataset`이라 불리는 클래스를 정의합니다.\n",
+    "이 데이터셋은:\n",
+    "\n",
+    "- `num_samples`(기본값은 3)개의 샘플을 생성하기\n",
+    "- 첫 번째 항목이 파일 열기를 시뮬레이션하기 전에 일정 시간 동안 휴면\n",
+    "- 파일에서 데이터 읽기를 시뮬레이션하기 위해 각 항목을 생성하기 전에 일정 시간 동안 휴면"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 3,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2020-09-23T03:57:06.071701Z",
+     "iopub.status.busy": "2020-09-23T03:57:06.070881Z",
+     "iopub.status.idle": "2020-09-23T03:57:06.072969Z",
+     "shell.execute_reply": "2020-09-23T03:57:06.073396Z"
+    },
+    "id": "zUQv4kCd-jKH"
+   },
+   "outputs": [],
+   "source": [
+    "class ArtificialDataset(tf.data.Dataset):\n",
+    "    def _generator(num_samples):\n",
+    "        # 파일 열기\n",
+    "        time.sleep(0.03)\n",
+    "        \n",
+    "        for sample_idx in range(num_samples):\n",
+    "            # 파일에서 데이터(줄, 기록) 읽기\n",
+    "            time.sleep(0.015)\n",
+    "            \n",
+    "            yield (sample_idx,)\n",
+    "    \n",
+    "    def __new__(cls, num_samples=3):\n",
+    "        return tf.data.Dataset.from_generator(\n",
+    "            cls._generator,\n",
+    "            output_types=tf.dtypes.int64,\n",
+    "            output_shapes=(1,),\n",
+    "            args=(num_samples,)\n",
+    "        )"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "O9y1WjNv-jKL"
+   },
+   "source": [
+    "이 데이터셋은 `tf.data.Dataset.range`와 유사하며 각 샘플의 시작과 사이에 일정한 지연시간을 추가합니다."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "FGK1Y4jn-jKM"
+   },
+   "source": [
+    "### 훈련 루프\n",
+    "\n",
+    "데이터셋을 반복하는 데 걸리는 시간을 측정하는 더미 훈련 루프를 작성합니다.\n",
+    "훈련 시간이 시뮬레이션됩니다."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 4,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2020-09-23T03:57:06.078718Z",
+     "iopub.status.busy": "2020-09-23T03:57:06.078004Z",
+     "iopub.status.idle": "2020-09-23T03:57:06.080723Z",
+     "shell.execute_reply": "2020-09-23T03:57:06.080112Z"
+    },
+    "id": "MIaM3u00-jKP"
+   },
+   "outputs": [],
+   "source": [
+    "def benchmark(dataset, num_epochs=2):\n",
+    "    start_time = time.perf_counter()\n",
+    "    for epoch_num in range(num_epochs):\n",
+    "        for sample in dataset:\n",
+    "            # 훈련 스텝마다 실행\n",
+    "            time.sleep(0.01)\n",
+    "    tf.print(\"실행 시간:\", time.perf_counter() - start_time)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "KK58SuXS-jKT"
+   },
+   "source": [
+    "## 성능 최적화\n",
+    "\n",
+    "성능을 최적화하는 방법을 보여주기 위해 `ArtificialDataset`의 성능을 향상시킵니다."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "Xi8t26y7-jKV"
+   },
+   "source": [
+    "### 추상적 접근\n",
+    "\n",
+    "트릭 없이 추상적 파이프라인으로 시작하여 데이터셋을 그대로 반복합니다."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 5,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2020-09-23T03:57:07.482688Z",
+     "iopub.status.busy": "2020-09-23T03:57:07.477809Z",
+     "iopub.status.idle": "2020-09-23T03:57:07.781839Z",
+     "shell.execute_reply": "2020-09-23T03:57:07.782417Z"
+    },
+    "id": "_gP7J1y4-jKY"
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "실행 시간: 0.2525894259999859\n"
+     ]
+    }
+   ],
+   "source": [
+    "benchmark(ArtificialDataset())"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "Lxeat5dH-jKf"
+   },
+   "source": [
+    "실제로는 다음과 같이 실행 시간이 소비되었습니다:\n",
+    "\n",
+    "![Naive](https://www.tensorflow.org/guide/images/data_performance/naive.svg)\n",
+    "\n",
+    "이를 포함한 훈련 스텝을 수행하는 것을 볼 수 있습니다:\n",
+    "\n",
+    "- 아직 열지 않은 경우 파일 열기,\n",
+    "- 파일에서 데이터 항목을 가져오기,\n",
+    "- 훈련할 데이터 사용하기.\n",
+    "\n",
+    "그러나 여기와 같은 추상적 동기 구현에서는 파이프라인이 데이터를 가져 오는 동안 모델이 유휴 상태입니다.\n",
+    "반대로, 모델이 훈련하는 동안 입력 파이프라인이 유휴 상태입니다.\n",
+    "따라서 훈련 스텝 시간은 모두 열기, 읽기 및 훈련 시간의 합계입니다.\n",
+    "\n",
+    "다음 섹션에서는 이 입력 파이프라인을 구축하여 성능이 뛰어난 텐서플로 입력 파이프라인 설계를 위한 모범 사례를 보여줍니다."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "mfukBGNz-jKh"
+   },
+   "source": [
+    "가져오기(Prefetching)\n",
+    "\n",
+    "가져오기는 전처리와 훈련 스텝의 모델 실행을 오버랩합니다.\n",
+    "모델이 `s`스텝 훈련을 실행하는 동안 입력 파이프라인은 `s+1`스텝의 데이터를 읽습니다.\n",
+    "이렇게 하면 훈련을 하는 최대(합과 반대로) 스텝 시간과 데이터를 추출하는 데 걸리는 시간을 단축시킬 수 있습니다.\n",
+    "\n",
+    "`tf.data` API는 소프트웨어 파이프라이닝 방법을 `tf.data.Dataset.prefetch` 변환을 통해 제공합니다. 이것은\n",
+    "데이터가 소비되는 시간과 데이터가 생성되는 시간 간의 의존성을 줄일 수 있습니다. 특히, 이 변환은 백그라운드 스레드와 내부 버퍼를 사용하여\n",
+    "요청된 시간 전에 입력 데이터셋에서 요소를 가져옵니다. 가져올 요소의 수는 하나의 훈련 스텝에서 소비한 배치의 수와\n",
+    "같거나 커야 합니다. 이 값을 수동으로 조정하거나 `tf.data.experimental.AUTOTUNE`으로 설정하면 tf.data 런타임이\n",
+    "실행 시에 동적으로 값을 조정하도록 만듭니다.\n",
+    "\n",
+    "프리페치 변환은 \"프로듀서\"의 작업과 \"컨슈머\"의 작업과 오버랩이 가능할 때마다 이점을 제공합니다."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 6,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2020-09-23T03:57:07.787306Z",
+     "iopub.status.busy": "2020-09-23T03:57:07.786332Z",
+     "iopub.status.idle": "2020-09-23T03:57:08.012774Z",
+     "shell.execute_reply": "2020-09-23T03:57:08.013207Z"
+    },
+    "id": "DHpUVqH1-jKi"
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "실행 시간: 0.2072504579998622\n"
+     ]
+    }
+   ],
+   "source": [
+    "benchmark(\n",
+    "    ArtificialDataset()\n",
+    "    .prefetch(tf.data.experimental.AUTOTUNE)\n",
+    ")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "h7z_kzo--jKn"
+   },
+   "source": [
+    "![Prefetched](https://www.tensorflow.org/guide/images/data_performance/prefetched.svg)\n",
+    "\n",
+    "이번에는 훈련 스텝이 샘플 0에 대해 실행되는 동안 입력 파이프라인이 샘플 1에 대한 데이터를 읽고 등등 하는 방식을 볼 수 있습니다."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "52QMKfaY-jKq"
+   },
+   "source": [
+    "### 데이터 추출 병렬화\n",
+    "\n",
+    "실제 환경에서는 입력 데이터가 로컬에 맞지 않거나 학습이 분산되어 있고 입력 데이터를 모든 컴퓨터에 복제하는 것은 적절하지 않기 때문에 입력\n",
+    "데이터를 원격으로(이를테면, GCS나 HDFS) 저장할 수 있습니다. 데이터를 로컬에서 읽는 데이터셋 파이프라인은 다음과 같은 로컬과 원격\n",
+    "저장소의 차이 때문에 원격으로 데이터를 읽을 때 입출력에 병목이 발생할 수 있습니다:\n",
+    "\n",
+    "*   **첫 번째 바이트(Time-to-first-byte):** 원격 저장소에서 파일의 첫 번째 바이트를 읽는 것은 로컬 저장소에서 읽어\n",
+    "    들이는 것보다 훨씬 오래 걸립니다.\n",
+    "*   **읽기 처리량(Read throughput):** 원격 저장소는 보통 큰 총 대역폭을 가지지만 하나의 파일을 읽을 때 이 대역폭의\n",
+    "    일부만 활용할 수 있습니다.\n",
+    "\n",
+    "게다가 바이트들이 메모리로 읽혀지면 데이터를 역직렬화 그리고/또는 해독할 필요가 있을 수 있습니다(예를 들면,\n",
+    "[protobuf](https://developers.google.com/protocol-buffers/)). 이 작업은 추가적인 계산이\n",
+    "필요합니다. 이 오버헤드는 데이터가 로컬 또는 원격으로 저장되는지와는 관계없이 존재하지만 데이터가 효과적으로 프리페치되지 않으면 원격의 경우에\n",
+    "나빠질 수 있습니다.\n",
+    "\n",
+    "다양한 데이터 추출 오버헤드의 영향을 줄이기 위해 `tf.data.Dataset.interleave` 변환은 (데이터 파일 판독기와 같은)다른\n",
+    "데이터셋의 내용을 인터리빙(interleaving)하여 데이터 추출 단계를 병렬화하는데 사용할 수 있습니다. 중첩할 데이터셋은\n",
+    "`cycle_length` 매개변수에 의해 지정될 수 있는 반면, 병렬처리 수준은 `num_parallel_calls` 매개변수에 의해 지정될\n",
+    "수 있습니다. `prefetch`와 `map` 변환과 비슷하게 `interleave` 변환은\n",
+    "`tf.data.experimental.AUTOTUNE`을 지원합니다. 이것은 어떤 수준의 병렬처리가 tf.data 런타임에 사용되는지에 대해\n",
+    "결정합니다."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "gs8O8Vbu-jKu"
+   },
+   "source": [
+    "#### 순차적 인터리브\n",
+    "\n",
+    "`tf.data.Dataset.interleave` 변환의 기본 인수는 두 개의 데이터셋에서 단일 샘플을 순차적으로 인터리브합니다."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 7,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2020-09-23T03:57:08.018384Z",
+     "iopub.status.busy": "2020-09-23T03:57:08.017753Z",
+     "iopub.status.idle": "2020-09-23T03:57:08.276458Z",
+     "shell.execute_reply": "2020-09-23T03:57:08.277009Z"
+    },
+    "id": "fDH12GiK-jKw"
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "실행 시간: 0.23465331400007017\n"
+     ]
+    }
+   ],
+   "source": [
+    "benchmark(\n",
+    "    tf.data.Dataset.range(2)\n",
+    "    .interleave(ArtificialDataset)\n",
+    ")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "78CsSOnf-jK0"
+   },
+   "source": [
+    "![순차적 인터리브](https://www.tensorflow.org/guide/images/data_performance/sequential_interleave.svg)\n",
+    "\n",
+    "이 그림을 사용하면 `interleave` 변환의 결과를 나타낼 수 있으며 사용가능한 두 데이터셋에서 샘플을 가져오는 것이 가능합니다.\n",
+    "그러나 여기에는 성능 향상이 포함되지 않습니다."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "j3cqqmYl-jK2"
+   },
+   "source": [
+    "#### 병렬 인터리브\n",
+    "\n",
+    "이제 `interleave` 변환의 `num_parallel_calls` 인수를 사용합니다.\n",
+    "이는 여러 병렬 데이터셋을 불러오고, 파일을 여는 데 기다리는 시간을 단축할 수 있습니다."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 8,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2020-09-23T03:57:08.282361Z",
+     "iopub.status.busy": "2020-09-23T03:57:08.281176Z",
+     "iopub.status.idle": "2020-09-23T03:57:08.477329Z",
+     "shell.execute_reply": "2020-09-23T03:57:08.477801Z"
+    },
+    "id": "a3FQcTPY-jK4"
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "실행 시간: 0.17235410600005707\n"
+     ]
+    }
+   ],
+   "source": [
+    "benchmark(\n",
+    "    tf.data.Dataset.range(2)\n",
+    "    .interleave(\n",
+    "        ArtificialDataset,\n",
+    "        num_parallel_calls=tf.data.experimental.AUTOTUNE\n",
+    "    )\n",
+    ")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "RxRLPB6C-jLA"
+   },
+   "source": [
+    "![병렬 인터리브](https://www.tensorflow.org/guide/images/data_performance/parallel_interleave.svg)\n",
+    "\n",
+    "이번에는 읽은 두 데이터셋이 병렬화되어 전역 데이터 처리 시간이 줄어듭니다."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "5ZCLFWyv-jLB"
+   },
+   "source": [
+    "### 데이터 변환 병렬화\n",
+    "\n",
+    "데이터를 준비할 때, 입력 요소들은 전처리가 필요할 수 있습니다.\n",
+    "이것 때문에 `tf.data` API가 `tf.data.Dataset.map` 변환을 제공하고, 그것은 사용자 정의 함수(예를 들어, 예제의 `parse_fn`)를 입력 데이터셋의 각 요소에 적용합니다.\n",
+    "입력 요소가 서로 독립적이기 때문에 전처리는 여러 개의 CPU 코어에서 병렬로 실행될 수 있습니다.\n",
+    "\n",
+    "이를 가능하게 하기 위해 `prefetch` 및 `interleave` 변환과 유사하게 `map` 변환은 병렬 처리 레벨을 지정하기 위해 `num_parallel_calls` 인수를 제공합니다.\n",
+    "\n",
+    "가장 좋은 `num_parallel_calls` 값은 하드웨어, 훈련 데이터(사이즈와 모양), 맵 함수의 비용, 그리고 CPU에서 동시에 어떤\n",
+    "처리가 수행되는지에 따라 다릅니다.\n",
+    "단순한 방법으로 가용한 CPU 코어의 숫자로 설정할 수 있습니다.\n",
+    "반면에, `num_parallel_calls`를 가용한 CPU 코어 숫자보다 훨씬 더 많이 설정한다면 비효율적인 스케줄링으로 느려질 것입니다.\n",
+    "`prefetch`와 `interleave` 변환과 비슷하게 `map` 변환은 tf.data 런타임에 가용되는 병렬화 수준을 결정하는\n",
+    "`tf.data.experimental.AUTOTUNE`을 제공합니다."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 9,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2020-09-23T03:57:08.482582Z",
+     "iopub.status.busy": "2020-09-23T03:57:08.481936Z",
+     "iopub.status.idle": "2020-09-23T03:57:08.484581Z",
+     "shell.execute_reply": "2020-09-23T03:57:08.484068Z"
+    },
+    "id": "GSkKetpx-jLD"
+   },
+   "outputs": [],
+   "source": [
+    "def mapped_function(s):\n",
+    "    # Do some hard pre-processing\n",
+    "    tf.py_function(lambda: time.sleep(0.03), [], ())\n",
+    "    return s"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "wiU7W_QC-jLI"
+   },
+   "source": [
+    "#### 순차적 매핑\n",
+    "\n",
+    "병렬 처리 없이 `map` 변환을 기본 예제로 사용하여 시작하십시오."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 10,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2020-09-23T03:57:08.490585Z",
+     "iopub.status.busy": "2020-09-23T03:57:08.488980Z",
+     "iopub.status.idle": "2020-09-23T03:57:08.982221Z",
+     "shell.execute_reply": "2020-09-23T03:57:08.981698Z"
+    },
+    "id": "ZSBvDpJG-jLL"
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "실행 시간: 0.4374830409999504\n"
+     ]
+    }
+   ],
+   "source": [
+    "benchmark(\n",
+    "    ArtificialDataset()\n",
+    "    .map(mapped_function)\n",
+    ")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "ngwMTDb6-jLR"
+   },
+   "source": [
+    "![순차적 매핑](https://www.tensorflow.org/guide/images/data_performance/sequential_map.svg)\n",
+    "\n",
+    "[추상적 접근](#The-naive-approach)의 경우 여기에서 열기, 읽기, 전처리(매핑) 및 단일 반복을 위해 훈련 스텝에 소요된 시간이 합산됩니다."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "U-10PE1D-jLU"
+   },
+   "source": [
+    "#### 병렬 매핑\n",
+    "\n",
+    "이제 동일한 전처리 함수를 사용하지만 여러 샘플에 병렬로 적용하십시오."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 11,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2020-09-23T03:57:08.992698Z",
+     "iopub.status.busy": "2020-09-23T03:57:08.990931Z",
+     "iopub.status.idle": "2020-09-23T03:57:09.287930Z",
+     "shell.execute_reply": "2020-09-23T03:57:09.287286Z"
+    },
+    "id": "F8AYLZbg-jLV"
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "실행 시간: 0.27341592900006617\n"
+     ]
+    }
+   ],
+   "source": [
+    "benchmark(\n",
+    "    ArtificialDataset()\n",
+    "    .map(\n",
+    "        mapped_function,\n",
+    "        num_parallel_calls=tf.data.experimental.AUTOTUNE\n",
+    "    )\n",
+    ")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "-MoJklzP-jLe"
+   },
+   "source": [
+    "![병렬 매핑](https://www.tensorflow.org/guide/images/data_performance/parallel_map.svg)\n",
+    "\n",
+    "이제 그림(plot)에서 전처리 단계가 겹치므로 단일 반복의 전체 시간이 줄어 듭니다."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "ZY1Q9kJO-jLh"
+   },
+   "source": [
+    "### 캐시하기\n",
+    "\n",
+    "`tf.data.Dataset.cache` 변환은 데이터셋을 메모리 또는 로컬 저장소에 캐시할 수 있습니다.\n",
+    "이렇게하면 각 에포크 동안 실행되는 일부 작업(파일 열기 및 데이터 읽기 등)이 저장됩니다."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 12,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2020-09-23T03:57:09.293095Z",
+     "iopub.status.busy": "2020-09-23T03:57:09.291989Z",
+     "iopub.status.idle": "2020-09-23T03:57:09.682136Z",
+     "shell.execute_reply": "2020-09-23T03:57:09.681620Z"
+    },
+    "id": "xieLApaI-jLi"
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "실행 시간: 0.36589472900004694\n"
+     ]
+    }
+   ],
+   "source": [
+    "benchmark(\n",
+    "    ArtificialDataset()\n",
+    "    .map(  # 캐시 전 시간이 많이 걸리는 작업 적용\n",
+    "        mapped_function\n",
+    "    ).cache(\n",
+    "    ),\n",
+    "    5\n",
+    ")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "KeMgW9XI-jLn"
+   },
+   "source": [
+    "![캐시된 데이터셋](https://www.tensorflow.org/guide/images/data_performance/cached_dataset.svg)\n",
+    "\n",
+    "데이터셋을 캐시할 때, `cache` 이전의 변환(파일 열기 및 데이터 읽기와 같은)은 첫 번째 에포크 동안에만 실행됩니다.\n",
+    "다음 에포크에는 `cache` 변환에 의해 캐시된 데이터를 재사용 할 것입니다.\n",
+    "\n",
+    "`map` 변환에 전달된 사용자 정의 함수가 비싸면 결과 데이터셋이 여전히 메모리 또는 로컬 스토리지에 적합할 수 있는 한 `map` 변환 후 `cache` 변환을 적용합니다.사용자 정의 함수가 캐시 용량을 넘어서 데이터셋을 저장하는 데 필요한 공간을 늘리면 `cache` 변환 후 데이터셋을 적용하거나 훈련 작업 전에 데이터를 전처리하여 리소스 사용량을 줄입니다."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "i3NtGI3r-jLp"
+   },
+   "source": [
+    "### 매핑 벡터화\n",
+    "\n",
+    "`map` 변환으로 전달된 사용자 정의 함수를 호출하면 사용자 정의 함수의 스케줄링 및 실행과 관련된 오버헤드가 있습니다.\n",
+    "사용자 정의 함수를 벡터화(즉, 한 번에 여러 입력에 대해 작동하도록)하고 `맵`을 변환하기 _전에_ `배치` 변환을 적용하는 것이 좋습니다.\n",
+    "\n",
+    "이 모범 사례를 설명하는 데 인공 데이터셋은 적합하지 않습니다.\n",
+    "스케줄링 지연은 약 10 마이크로초(10e-6초)로, `ArtificialDataset`에 사용된 수십 밀리초보다 훨씬 짧으므로 그 영향을 보기가 어렵습니다.\n",
+    "\n",
+    "이 예제에서는 기본 `tf.data.Dataset.range` 함수를 사용하고 훈련 루프를 가장 간단한 형태로 단순화하십시오."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 13,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2020-09-23T03:57:09.688251Z",
+     "iopub.status.busy": "2020-09-23T03:57:09.687505Z",
+     "iopub.status.idle": "2020-09-23T03:57:09.690374Z",
+     "shell.execute_reply": "2020-09-23T03:57:09.689893Z"
+    },
+    "id": "xqtiYPmb-jLt"
+   },
+   "outputs": [],
+   "source": [
+    "fast_dataset = tf.data.Dataset.range(10000)\n",
+    "\n",
+    "def fast_benchmark(dataset, num_epochs=2):\n",
+    "    start_time = time.perf_counter()\n",
+    "    for _ in tf.data.Dataset.range(num_epochs):\n",
+    "        for _ in dataset:\n",
+    "            pass\n",
+    "    tf.print(\"실행 시간:\", time.perf_counter() - start_time)\n",
+    "    \n",
+    "def increment(x):\n",
+    "    return x+1"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "Fj2gmsMT-jL5"
+   },
+   "source": [
+    "#### 스칼라 매핑"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 14,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2020-09-23T03:57:09.695223Z",
+     "iopub.status.busy": "2020-09-23T03:57:09.694590Z",
+     "iopub.status.idle": "2020-09-23T03:57:10.553738Z",
+     "shell.execute_reply": "2020-09-23T03:57:10.554182Z"
+    },
+    "id": "Imn3SslJ-jMA"
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "실행 시간: 0.8322036090000893\n"
+     ]
+    }
+   ],
+   "source": [
+    "fast_benchmark(\n",
+    "    fast_dataset\n",
+    "    # 한 번에 한 항목씩 함수 적용\n",
+    "    .map(increment)\n",
+    "    # 배치\n",
+    "    .batch(256)\n",
+    ")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "BWUNbPqv-jMF"
+   },
+   "source": [
+    "![스칼라 맵](https://www.tensorflow.org/guide/images/data_performance/scalar_map.svg)\n",
+    "\n",
+    "위의 그림은 (샘플이 적은) 진행 상황을 보여줍니다.\n",
+    "매핑된 함수가 각 샘플에 적용되어 있음을 알 수 있습니다.\n",
+    "이 기능은 매우 빠르지만 시간 성능에 영향을 주는 약간의 오버헤드가 있습니다."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "tDVSM0A--jMG"
+   },
+   "source": [
+    "#### 매핑 벡터화됨"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 15,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2020-09-23T03:57:10.559274Z",
+     "iopub.status.busy": "2020-09-23T03:57:10.558588Z",
+     "iopub.status.idle": "2020-09-23T03:57:10.601927Z",
+     "shell.execute_reply": "2020-09-23T03:57:10.602342Z"
+    },
+    "id": "nAw1mDLw-jMI"
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "실행 시간: 0.03523033500005113\n"
+     ]
+    }
+   ],
+   "source": [
+    "fast_benchmark(\n",
+    "    fast_dataset\n",
+    "    .batch(256)\n",
+    "    # items의 배치에 함수 적용\n",
+    "    # tf.Tensor.__add__ 메서드는 이미 배치를 다룸\n",
+    "    .map(increment)\n",
+    ")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "DbMteMY9-jMO"
+   },
+   "source": [
+    "![벡터화된 맵](https://www.tensorflow.org/guide/images/data_performance/vectorized_map.svg)\n",
+    "\n",
+    "이번에는 매핑된 함수가 한 번 호출되어 샘플 배치에 적용됩니다.\n",
+    "이 함수를 실행하는 데 시간이 더 걸릴 수 있지만 오버헤드는 한 번만 나타나므로 전체 시간 성능이 향상됩니다."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "hfueG0Wj-jMR"
+   },
+   "source": [
+    "### 메모리 사용량(footprint) 줄이기\n",
+    "\n",
+    "`interleave`, `prefetch`, `shuffle`을 포함한 많은 변환은 요소들의 내부 버퍼를 유지합니다.\n",
+    "사용자 정의 함수가 `map` 변환에 전달된 경우 요소의 크기가 변경되고 맵 변환의 순서와 버퍼 요소가 메모리 사용에 영향을 줍니다.\n",
+    "일반적으로 순서를 다르게 하는 것이 성능에 도움이 되는 경우 메모리 사용량이 낮아지는 순서를 선택하는 것이 좋습니다.\n",
+    "\n",
+    "#### 부분 계산 캐싱\n",
+    "\n",
+    "이 변환으로 인해 데이터가 너무 커서 메모리에 맞지 않는 경우를 제외하고 `map` 변환 후 데이터셋을 캐시하는 것이 좋습니다.\n",
+    "매핑된 기능을 시간 소모적인 부분과 메모리 소모적인 부분의 두 부분으로 나눌 수 있다면 교환이 성사될 수 있습니다.\n",
+    "이 경우 아래와 같이 변환을 연결할 수 있습니다:\n",
+    "\n",
+    "```python\n",
+    "dataset.map(time_consuming_mapping).cache().map(memory_consuming_mapping)\n",
+    "```\n",
+    "\n",
+    "이런 식으로 시간이 많이 걸리는 부분은 첫 번째 에포크(epoch) 동안에만 실행되며 너무 많은 캐시 공간을 사용하지 않습니다."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "MYOHG69M-jMT"
+   },
+   "source": [
+    "## 가장 좋은 예제 요약\n",
+    "\n",
+    "다음은 성능이 좋은 텐서플로 입력 파이프라인을 설계하기 위한 가장 좋은 예제를 요약한 것입니다:\n",
+    "\n",
+    "*   [`prefetch` 변환](#Pipelining)을 사용하여 프로듀서와 컨슈머의 작업을 오버랩하세요.\n",
+    "*   `interleave` 변환을 이용해 [데이터 읽기 변환을 병렬화하세요](#Parallelizing-data-extraction).\n",
+    "*   `num_parallel_calls` 매개변수를 설정하여 [`map` 변환을 병렬 처리하세요](#Parallelizing-data-transformation).\n",
+    "*   데이터가 메모리에 저장될 수 있는 경우, [`cache` 변환을 사용](#Caching)하여 첫 번째 에포크동안 데이터를 메모리에 캐시하세요.\n",
+    "*   `map` 변환에 전달된 [사용자 정의 함수를 벡터화](#Map-and-batch)하세요.\n",
+    "*   `interleave`, `prefetch`, 그리고 `shuffle` 변환을 적용하여 [메모리 사용을 줄이세요](#Reducing-memory-footprint)."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "mP_EMFsQ-jMU"
+   },
+   "source": [
+    "## 그림 재현\n",
+    "\n",
+    "참고: 이 노트북의 나머지 부분은 위의 그림을 재현하는 방법에 대한 것이며, 이 코드로 자유롭게 놀아볼 수 있지만 이해하는 것은 이 자습서의 필수적인 부분이 아닙니다.\n",
+    "\n",
+    "`tf.data.Dataset` API에 대해 더 깊이 이해하기 위해 자신만의 파이프라인을 사용할 수 있습니다.\n",
+    "다음은 이 안내서의 이미지를 그리는 데 사용되는 코드입니다.\n",
+    "다음과 같은 일반적인 어려움에 대한 해결 방법을 보여주는 좋은 출발점이 될 수 있습니다:\n",
+    "\n",
+    "- 실행 시간 재현성;\n",
+    "- 매핑 된 기능 즉시 실행;\n",
+    "- `interleave` 변환 호출 가능."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 16,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2020-09-23T03:57:10.607059Z",
+     "iopub.status.busy": "2020-09-23T03:57:10.606426Z",
+     "iopub.status.idle": "2020-09-23T03:57:11.192974Z",
+     "shell.execute_reply": "2020-09-23T03:57:11.193417Z"
+    },
+    "id": "7M_jFLer-jMV"
+   },
+   "outputs": [],
+   "source": [
+    "import itertools\n",
+    "from collections import defaultdict\n",
+    "\n",
+    "import numpy as np\n",
+    "import matplotlib as mpl\n",
+    "import matplotlib.pyplot as plt"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "Z3pjnxtK-jMa"
+   },
+   "source": [
+    "### 데이터셋\n",
+    "\n",
+    "`ArtificialDataset`과 비슷하게 각 단계에서 소요된 시간을 리턴하는 데이터셋을 빌드할 수 있습니다."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 17,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2020-09-23T03:57:11.203360Z",
+     "iopub.status.busy": "2020-09-23T03:57:11.202656Z",
+     "iopub.status.idle": "2020-09-23T03:57:11.204502Z",
+     "shell.execute_reply": "2020-09-23T03:57:11.204923Z"
+    },
+    "id": "OgGl4U7t-jMc"
+   },
+   "outputs": [],
+   "source": [
+    "class TimeMeasuredDataset(tf.data.Dataset):\n",
+    "    # 출력: (steps, timings, counters)\n",
+    "    OUTPUT_TYPES = (tf.dtypes.string, tf.dtypes.float32, tf.dtypes.int32)\n",
+    "    OUTPUT_SHAPES = ((2, 1), (2, 2), (2, 3))\n",
+    "    \n",
+    "    _INSTANCES_COUNTER = itertools.count()  # 생성된 데이터셋 수\n",
+    "    _EPOCHS_COUNTER = defaultdict(itertools.count)  # 각 데이터를 수행한 에포크 수\n",
+    "    \n",
+    "    def _generator(instance_idx, num_samples):\n",
+    "        epoch_idx = next(TimeMeasuredDataset._EPOCHS_COUNTER[instance_idx])\n",
+    "        \n",
+    "        # 파일 열기\n",
+    "        open_enter = time.perf_counter()\n",
+    "        time.sleep(0.03)\n",
+    "        open_elapsed = time.perf_counter() - open_enter\n",
+    "        \n",
+    "        for sample_idx in range(num_samples):\n",
+    "            # 파일에서 데이터(줄, 기록) 읽어오기\n",
+    "            read_enter = time.perf_counter()\n",
+    "            time.sleep(0.015)\n",
+    "            read_elapsed = time.perf_counter() - read_enter\n",
+    "            \n",
+    "            yield (\n",
+    "                [(\"Open\",), (\"Read\",)],\n",
+    "                [(open_enter, open_elapsed), (read_enter, read_elapsed)],\n",
+    "                [(instance_idx, epoch_idx, -1), (instance_idx, epoch_idx, sample_idx)]\n",
+    "            )\n",
+    "            open_enter, open_elapsed = -1., -1.  # 음수는 필터링됨\n",
+    "            \n",
+    "    \n",
+    "    def __new__(cls, num_samples=3):\n",
+    "        return tf.data.Dataset.from_generator(\n",
+    "            cls._generator,\n",
+    "            output_types=cls.OUTPUT_TYPES,\n",
+    "            output_shapes=cls.OUTPUT_SHAPES,\n",
+    "            args=(next(cls._INSTANCES_COUNTER), num_samples)\n",
+    "        )"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "YQqDP4jk-jMj"
+   },
+   "source": [
+    "이 데이터셋은 `[[2, 1], [2, 2], [2, 3]]`의 크기와 `[tf.dtypes.string, tf.dtypes.float32, tf.dtypes.int32]`의 타입을 가진 샘플을 제공합니다.\n",
+    "각 샘플은:\n",
+    "```\n",
+    "(\n",
+    "  [(\"Open\"), (\"Read\")],\n",
+    "  [(t0, d), (t0, d)],\n",
+    "  [(i, e, -1), (i, e, s)]\n",
+    ")\n",
+    "```\n",
+    "\n",
+    "이며,\n",
+    "\n",
+    "- `Open`과 `Read`는 스텝 식별자\n",
+    "- `t0`는 해당 스텝이 시작된 타임스탬프\n",
+    "- `d`는 해당 스텝에서 소비된 시간\n",
+    "- `i`는 인스턴스의 인덱스\n",
+    "- `e`는 에포크 인덱스(데이터셋이 반복된 횟수)\n",
+    "- `s`는 샘플 인덱스입니다."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "IQK913bB-jMm"
+   },
+   "source": [
+    "### 반복 루프\n",
+    "\n",
+    "반복 루프를 조금 더 복잡하게 하여 모든 타이밍을 집계하십시오.\n",
+    "위에서 설명한 대로 샘플을 생성하는 데이터셋에서만 작동합니다."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 18,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2020-09-23T03:57:11.215501Z",
+     "iopub.status.busy": "2020-09-23T03:57:11.214848Z",
+     "iopub.status.idle": "2020-09-23T03:57:11.217233Z",
+     "shell.execute_reply": "2020-09-23T03:57:11.216662Z"
+    },
+    "id": "zAy-K_Cq-jMn"
+   },
+   "outputs": [],
+   "source": [
+    "def timelined_benchmark(dataset, num_epochs=2):\n",
+    "    # 누산기 초기화\n",
+    "    steps_acc = tf.zeros([0, 1], dtype=tf.dtypes.string)\n",
+    "    times_acc = tf.zeros([0, 2], dtype=tf.dtypes.float32)\n",
+    "    values_acc = tf.zeros([0, 3], dtype=tf.dtypes.int32)\n",
+    "    \n",
+    "    start_time = time.perf_counter()\n",
+    "    for epoch_num in range(num_epochs):\n",
+    "        epoch_enter = time.perf_counter()\n",
+    "        for (steps, times, values) in dataset:\n",
+    "            # 데이터셋 준비 정보 기록하기\n",
+    "            steps_acc = tf.concat((steps_acc, steps), axis=0)\n",
+    "            times_acc = tf.concat((times_acc, times), axis=0)\n",
+    "            values_acc = tf.concat((values_acc, values), axis=0)\n",
+    "            \n",
+    "            # 훈련 시간 시뮬레이션\n",
+    "            train_enter = time.perf_counter()\n",
+    "            time.sleep(0.01)\n",
+    "            train_elapsed = time.perf_counter() - train_enter\n",
+    "            \n",
+    "            # 훈련 정보 기록하기\n",
+    "            steps_acc = tf.concat((steps_acc, [[\"Train\"]]), axis=0)\n",
+    "            times_acc = tf.concat((times_acc, [(train_enter, train_elapsed)]), axis=0)\n",
+    "            values_acc = tf.concat((values_acc, [values[-1]]), axis=0)\n",
+    "        \n",
+    "        epoch_elapsed = time.perf_counter() - epoch_enter\n",
+    "        # 에포크 정보 기록하기\n",
+    "        steps_acc = tf.concat((steps_acc, [[\"Epoch\"]]), axis=0)\n",
+    "        times_acc = tf.concat((times_acc, [(epoch_enter, epoch_elapsed)]), axis=0)\n",
+    "        values_acc = tf.concat((values_acc, [[-1, epoch_num, -1]]), axis=0)\n",
+    "        time.sleep(0.001)\n",
+    "    \n",
+    "    tf.print(\"실행 시간:\", time.perf_counter() - start_time)\n",
+    "    return {\"steps\": steps_acc, \"times\": times_acc, \"values\": values_acc}"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "jw_WSQC8-jMs"
+   },
+   "source": [
+    "### 그리기(plotting) 메서드\n",
+    "\n",
+    "마지막으로, `timelined_benchmark` 함수에 의해 리턴된 값이 주어지면 타임라인을 그릴 수 있는 함수를 정의하십시오."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 19,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2020-09-23T03:57:11.231267Z",
+     "iopub.status.busy": "2020-09-23T03:57:11.230555Z",
+     "iopub.status.idle": "2020-09-23T03:57:11.232287Z",
+     "shell.execute_reply": "2020-09-23T03:57:11.232706Z"
+    },
+    "id": "1j73RxiP-jMw"
+   },
+   "outputs": [],
+   "source": [
+    "def draw_timeline(timeline, title, width=0.5, annotate=False, save=False):\n",
+    "    # 타임라인에서 유효하지 않은 항목(음수 또는 빈 스텝) 제거\n",
+    "    invalid_mask = np.logical_and(timeline['times'] > 0, timeline['steps'] != b'')[:,0]\n",
+    "    steps = timeline['steps'][invalid_mask].numpy()\n",
+    "    times = timeline['times'][invalid_mask].numpy()\n",
+    "    values = timeline['values'][invalid_mask].numpy()\n",
+    "    \n",
+    "    # 처음 발견될 때 순서대로 다른 스텝을 가져옵니다.\n",
+    "    step_ids, indices = np.stack(np.unique(steps, return_index=True))\n",
+    "    step_ids = step_ids[np.argsort(indices)]\n",
+    " \n",
+    "    # 시작 시간을 0으로 하고 최대 시간 값을 계산하십시오.\n",
+    "    min_time = times[:,0].min()\n",
+    "    times[:,0] = (times[:,0] - min_time)\n",
+    "    end = max(width, (times[:,0]+times[:,1]).max() + 0.01)\n",
+    "    \n",
+    "    cmap = mpl.cm.get_cmap(\"plasma\")\n",
+    "    plt.close()\n",
+    "    fig, axs = plt.subplots(len(step_ids), sharex=True, gridspec_kw={'hspace': 0})\n",
+    "    fig.suptitle(title)\n",
+    "    fig.set_size_inches(17.0, len(step_ids))\n",
+    "    plt.xlim(-0.01, end)\n",
+    "    \n",
+    "    for i, step in enumerate(step_ids):\n",
+    "        step_name = step.decode()\n",
+    "        ax = axs[i]\n",
+    "        ax.set_ylabel(step_name)\n",
+    "        ax.set_ylim(0, 1)\n",
+    "        ax.set_yticks([])\n",
+    "        ax.set_xlabel(\"time (s)\")\n",
+    "        ax.set_xticklabels([])\n",
+    "        ax.grid(which=\"both\", axis=\"x\", color=\"k\", linestyle=\":\")\n",
+    "        \n",
+    "        # 주어진 단계에 대한 타이밍과 주석 얻기\n",
+    "        entries_mask = np.squeeze(steps==step)\n",
+    "        serie = np.unique(times[entries_mask], axis=0)\n",
+    "        annotations = values[entries_mask]\n",
+    "        \n",
+    "        ax.broken_barh(serie, (0, 1), color=cmap(i / len(step_ids)), linewidth=1, alpha=0.66)\n",
+    "        if annotate:\n",
+    "            for j, (start, width) in enumerate(serie):\n",
+    "                annotation = \"\\n\".join([f\"{l}: {v}\" for l,v in zip((\"i\", \"e\", \"s\"), annotations[j])])\n",
+    "                ax.text(start + 0.001 + (0.001 * (j % 2)), 0.55 - (0.1 * (j % 2)), annotation,\n",
+    "                        horizontalalignment='left', verticalalignment='center')\n",
+    "    if save:\n",
+    "        plt.savefig(title.lower().translate(str.maketrans(\" \", \"_\")) + \".svg\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "xto6GNdO-jM1"
+   },
+   "source": [
+    "### 매핑된 함수용 래퍼(wrappers) 사용\n",
+    "\n",
+    "eager 컨텍스트에서 매핑된 함수를 실행하려면 tf.py_function 호출 내에서 래핑해야 합니다."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 20,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2020-09-23T03:57:11.237590Z",
+     "iopub.status.busy": "2020-09-23T03:57:11.236894Z",
+     "iopub.status.idle": "2020-09-23T03:57:11.239229Z",
+     "shell.execute_reply": "2020-09-23T03:57:11.238635Z"
+    },
+    "id": "39v7JD4L-jM2"
+   },
+   "outputs": [],
+   "source": [
+    "def map_decorator(func):\n",
+    "    def wrapper(steps, times, values):\n",
+    "        # 자동 그래프가 메서드를 컴파일하지 못하도록 tf.py_function을 사용\n",
+    "        return tf.py_function(\n",
+    "            func,\n",
+    "            inp=(steps, times, values),\n",
+    "            Tout=(steps.dtype, times.dtype, values.dtype)\n",
+    "        )\n",
+    "    return wrapper"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "7eJRCinb-jM5"
+   },
+   "source": [
+    "### 파이프라인 비교"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 21,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2020-09-23T03:57:11.243322Z",
+     "iopub.status.busy": "2020-09-23T03:57:11.242620Z",
+     "iopub.status.idle": "2020-09-23T03:57:11.244664Z",
+     "shell.execute_reply": "2020-09-23T03:57:11.245066Z"
+    },
+    "id": "YwX4ndHE-jM6"
+   },
+   "outputs": [],
+   "source": [
+    "_batch_map_num_items = 50\n",
+    "\n",
+    "def dataset_generator_fun(*args):\n",
+    "    return TimeMeasuredDataset(num_samples=_batch_map_num_items)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "EwxJT2aR-jNA"
+   },
+   "source": [
+    "#### Naive"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 22,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2020-09-23T03:57:11.252128Z",
+     "iopub.status.busy": "2020-09-23T03:57:11.251389Z",
+     "iopub.status.idle": "2020-09-23T03:57:24.060189Z",
+     "shell.execute_reply": "2020-09-23T03:57:24.059467Z"
+    },
+    "id": "wLKgurx_-jNC"
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "실행 시간: 12.411884020999878\n"
+     ]
+    }
+   ],
+   "source": [
+    "@map_decorator\n",
+    "def naive_map(steps, times, values):\n",
+    "    map_enter = time.perf_counter()\n",
+    "    time.sleep(0.001)  # 시간 소비 스텝\n",
+    "    time.sleep(0.0001)  # 메모리 소비 스텝\n",
+    "    map_elapsed = time.perf_counter() - map_enter\n",
+    "\n",
+    "    return (\n",
+    "        tf.concat((steps, [[\"Map\"]]), axis=0),\n",
+    "        tf.concat((times, [[map_enter, map_elapsed]]), axis=0),\n",
+    "        tf.concat((values, [values[-1]]), axis=0)\n",
+    "    )\n",
+    "\n",
+    "naive_timeline = timelined_benchmark(\n",
+    "    tf.data.Dataset.range(2)\n",
+    "    .flat_map(dataset_generator_fun)\n",
+    "    .map(naive_map)\n",
+    "    .batch(_batch_map_num_items, drop_remainder=True)\n",
+    "    .unbatch(),\n",
+    "    5\n",
+    ")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "EJqUMDsO-jNG"
+   },
+   "source": [
+    "### Optimized"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 23,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2020-09-23T03:57:24.072604Z",
+     "iopub.status.busy": "2020-09-23T03:57:24.071903Z",
+     "iopub.status.idle": "2020-09-23T03:57:30.408729Z",
+     "shell.execute_reply": "2020-09-23T03:57:30.409267Z"
+    },
+    "id": "HYHcwabr-jNH"
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "실행 시간: 6.294809700999849\n"
+     ]
+    }
+   ],
+   "source": [
+    "@map_decorator\n",
+    "def time_consumming_map(steps, times, values):\n",
+    "    map_enter = time.perf_counter()\n",
+    "    time.sleep(0.001 * values.shape[0])  # 시간 소비 스텝\n",
+    "    map_elapsed = time.perf_counter() - map_enter\n",
+    "\n",
+    "    return (\n",
+    "        tf.concat((steps, tf.tile([[[\"1st map\"]]], [steps.shape[0], 1, 1])), axis=1),\n",
+    "        tf.concat((times, tf.tile([[[map_enter, map_elapsed]]], [times.shape[0], 1, 1])), axis=1),\n",
+    "        tf.concat((values, tf.tile([[values[:][-1][0]]], [values.shape[0], 1, 1])), axis=1)\n",
+    "    )\n",
+    "\n",
+    "\n",
+    "@map_decorator\n",
+    "def memory_consumming_map(steps, times, values):\n",
+    "    map_enter = time.perf_counter()\n",
+    "    time.sleep(0.0001 * values.shape[0])  # 메모리 소비 스텝\n",
+    "    map_elapsed = time.perf_counter() - map_enter\n",
+    "\n",
+    "    # 배치 차원을 다루는 데 tf.tile 사용\n",
+    "    return (\n",
+    "        tf.concat((steps, tf.tile([[[\"2nd map\"]]], [steps.shape[0], 1, 1])), axis=1),\n",
+    "        tf.concat((times, tf.tile([[[map_enter, map_elapsed]]], [times.shape[0], 1, 1])), axis=1),\n",
+    "        tf.concat((values, tf.tile([[values[:][-1][0]]], [values.shape[0], 1, 1])), axis=1)\n",
+    "    )\n",
+    "\n",
+    "\n",
+    "optimized_timeline = timelined_benchmark(\n",
+    "    tf.data.Dataset.range(2)\n",
+    "    .interleave(  # 데이터 읽기 병렬화\n",
+    "        dataset_generator_fun,\n",
+    "        num_parallel_calls=tf.data.experimental.AUTOTUNE\n",
+    "    )\n",
+    "    .batch(  # 매핑된 함수 벡터화\n",
+    "        _batch_map_num_items,\n",
+    "        drop_remainder=True)\n",
+    "    .map(  # 맵 변환 병렬화\n",
+    "        time_consumming_map,\n",
+    "        num_parallel_calls=tf.data.experimental.AUTOTUNE\n",
+    "    )\n",
+    "    .cache()  # 데이터 캐시\n",
+    "    .map(  # 메모리 사용량 줄이기\n",
+    "        memory_consumming_map,\n",
+    "        num_parallel_calls=tf.data.experimental.AUTOTUNE\n",
+    "    )\n",
+    "    .prefetch(  # 프로듀서와 컨슈머 작업 오버랩\n",
+    "        tf.data.experimental.AUTOTUNE\n",
+    "    )\n",
+    "    .unbatch(),\n",
+    "    5\n",
+    ")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 24,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2020-09-23T03:57:30.413583Z",
+     "iopub.status.busy": "2020-09-23T03:57:30.412907Z",
+     "iopub.status.idle": "2020-09-23T03:57:31.216856Z",
+     "shell.execute_reply": "2020-09-23T03:57:31.217385Z"
+    },
+    "id": "b_CSUbxL-jNK"
+   },
+   "outputs": [
+    {
+     "data": {
+      "image/png": "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957o3RO9+6J7T/Tui+6L1TuJHppz/pedGXjcuHF9iIN2R+++6N4TvXuid19074nefdF9sXp/J/q7KaWTd2bgFStW9CEO2h29+6J7T/Tuid590b0nevdF98XqnUSfpY6J9FMppcdTSk+klB6vtcHMmTMbT4e2Q+++6N4TvXuid19074nefdF9sbom0TnnPXLOu+WcB+ec9+z8eM9a28ybN685CdFW6N0X3Xuid0/07ovuPdG7L7ovVtckOnWYllKa0/nxQSmll9fa5uKLL25GPrQZevdF957o3RO9+6J7T/Tui+6L1fvj3JdKeoWkqZ0fb5T0H7U2mDZtWgOx0K7o3Rfde6J3T/Tui+490bsvui9W76tzH59zHpdSulmScs5/TSkNrLXB0qVLGw6H9kPvvujeE717ondfdO+J3n3RfbF6V6K3pZT6ScqSlFIaKemZWhvwXQtP9O6L7j3Ruyd690X3nujdF90Xq3cS/UVJyyXtl1L6rKSfS6r5W+Z818ITvfuie0/07onefdG9J3r3RffF6n117q9K+og6Js4PSHprzvkbtbaZPXt24+nQdujdF917ondP9O6L7j3Ruy+6L1bv70RL0lBJXT/SPaS3T54/f35fM6GN0bsvuvdE757o3Rfde6J3X3RfrN4/cXWBpP+StLekEZIWpZQ+UWubBQsWNJ4ObYfefdG9J3r3RO++6N4Tvfui+2L1rkS/W9LROeenJCmldJGkX0v6TE8bTJ06tae7sAujd19074nePdG7L7r3RO++6L5YvS8s9oCkwd0+HiTp/lobrFy5sq+Z0Mbo3Rfde6J3T/Tui+490bsvui9W70r0Bkl3pJSu7vz4dZJ+mVL6oiTlnM/ccYOxY8c2JyHaCr37ontP9O6J3n3RvSd690X3xeqdRP9Q0jXqeFGx7ZJ6/ZbE+vXrG4iFdkXvvujeE717ondfdO+J3n3RfbGak+iUUn91/Fmr90m6R1KSdLCkRZLOzzlv62nbzZs3NzEm2gW9+6J7T/Tuid590b0nevdF98V6+53o+ep4Re4xOefjcs7jJB0qaa/O+3o0ZsyY5iREW6F3X3Tvid490bsvuvdE777ovlhvk+g3STo95/xE1w0558clzZb0xlobrlq1qvF0aDv07ovuPdG7J3r3Rfee6N0X3RfrbRKdc8654Man1fH70T065ZRTGsmFNkXvvujeE717ondfdO+J3n3RfbHeJtG/SSm9Z8cbU0rTJN1Za8NLL720kVxoU/Tui+490bsnevdF957o3RfdF+vt1bk/IOnKlNL7JK3uvG28pCGSan5bYu7cuY2nQ9uhd19074nePdG7L7r3RO++6L5YzZXonPP9OefjJV0o6U+dbxfmnF+ec76/1rannXZaszKijdC7L7r3RO+e6N0X3Xuid190X6yuvxOdc/6JpJ/szMCLFy/uSx60OXr3Rfee6N0Tvfuie0/07ovui/X2O9F9Nn369LKGRoXRuy+690TvnujdF917ondfdF+stEn0kiVLyhoaFUbvvujeE717ondfdO+J3n3RfbHSJtEzZswoa2hUGL37ontP9O6J3n3RvSd690X3xUqbRF9++eVlDY0Ko3dfdO+J3j3Ruy+690Tvvui+WGmT6Dlz5pQ1NCqM3n3RvSd690TvvujeE737ovtipU2izzjjjLKGRoXRuy+690TvnujdF917ondfdF+stEn08uXLyxoaFUbvvujeE717ondfdO+J3n3RfbHSJtETJkwoa2hUGL37ontP9O6J3n3RvSd690X3xUqbRK9du7asoVFh9O6L7j3Ruyd690X3nujdF90XK20SPWTIkLKGRoXRuy+690TvnujdF917ondfdF+stEn08OHDyxoaFUbvvujeE717ondfdO+J3n3RfbGUc276oCNGjMijR49+1m2P/HGjtm7a/qzbBu7eX5Kec3s73b/73gO16bGt2rppuwbu3l8jDxsmqfjx9mXMnb2/t6/R6Pjdx+7+eKuoas+5Zv7fd79t5GHD9MgfN/7ttiruL8147LvvPVBDnzew8GtXQdU7aNb93Y9xkprSazP3iWbfX/VjXJeo/5+y7i861+x4TG/1Ob6Z4/c0drs/56TWnwebdX89z7lmZYh8jDt+7ao/54BIq1evzjnnwkXn/mV8wdGjR+sLX/iCTjjhhL/d9vlX/lgP3LbhWZ93wIv3kqTn3N5O9+990FA9du+TeuC2DTrgxXvp3OtfJ6n48fZlzJ29v7ev0ej43cfu/ni7XHfddc/qPVLVnnPN/L/vftu5179On3/lj/92W9T+8NTz79Ghex1V2mPf+6Chet/XJhZ+7SqoQgetuL/7MU6SHhn0e43c/4hSe9+ZfaLZ9+94jKuS3p5zZf7/3Lf9N3r5i19R2vhF55odj+mtPsc3c/yexm6H59zdG27t8Vgvtf482Kz763nONStD5GPc8WvX+5yr0vUdWsu5+5TSmp7uK+3Hue+8886yhkaF0buvhzffGx0BAR584p7oCAjw2DP3R0dAEI71nri+80X3xUqbRE+aNKmsoVFh9O7rsL2Ojo6AAGP3HRcdAQEO6n9kdAQE4Vjvies7X3RfrLRJ9LJly8oaGhVG775u/svK6AgIsOqeq6MjIMCd234WHQFBONZ74vrOF90XK20Sfc4555Q1NCqM3n39wwH/FB0BAU564buiIyDAcQPfHB0BQTjWe+L6zhfdFyttEn3eeeeVNTQqjN59ffdPl0VHQIBv3PIf0REQ4GdblkRHQBCO9Z64vvNF98VKm0QvXLiwrKFRYfTu638ddlZ0BASYPp6Tq6PXDp4VHQFBONZ74vrOF90XK20SPW3atLKGRoXRu69lv78oOgICfHnVp6MjIMCKzZdER0AQjvWeuL7zRffFSptEL126tKyhUWH07mvqER+NjoAAp0/4ZHQEBJgyhNVIVxzrPXF954vui7ESjaaid1+sTnhiJdoTK9G+ONZ74vrOF90XYyUaTUXvvlid8MRKtCdWon1xrPfE9Z0vui9W2iT67LPPLmtoVBi9+/rOWl54wtHXbmZF0tG1Ty2KjoAgHOs9cX3ni+6LlTaJPv/888saGhVG775ec+Cp0REQ4I0vek90BAR4+cC3RUdAEI71nri+80X3xUqbRC9axHepHdG7r189/MPoCAjw87Xfj46AAHdsWxkdAUE41nvi+s4X3RcrbRI9ZcqUsoZGhdG7r7HDXx4dAQFeOmpCdAQEGNP/2OgICMKx3hPXd77ovlhpk+g1a9aUNTQqjN593b/prugICHDPX38XHQEBHnpmbXQEBOFY74nrO190X6x/rTtTSnvXuj/n/FhP940aNaqvmdDG6N3XHgNrHi6wi9pryD7StugUaLVhaXh0BAThWO+J6ztfdF+s5iRa0mpJWVKSdLCkv3a+P1zSnyWNKTUdAAAAAAAVUvPHuXPOY3LOh0r6saQ355xH5Jz3kfQmST+qte26deualxJtg959PbG1xx9MwS5sw+ZHoyMgwMa8PjoCgnCs98T1nS+6L1bv70RPyDn/7SVYc84rJE2stcG4ceMayYU2Re++nr/74dEREOCQ570wOgIC7LcbP4jmimO9J67vfNF9sXon0Q+klD6RUhrd+fZxSQ/U2mDFihWNp0PboXdfd67/ZXQEBLht3aroCAiwdvvN0REQhGO9J67vfNF9sXon0adKGilpeefbvp239WjmzJmNJUNbondfL9v3pOgICPCqMSdHR0CAlwyYFB0BQTjWe+L6zhfdF6trEp1zfiznfFbO+djOt7NqvTK3JM2bN685CdFW6N3XT+67IjoCAnzvt1+JjoAAv9x6ZXQEBOFY74nrO190X6y3V+eWJKWURkr6iKSXSBrcdXvO+TU9bXPxxRc3HA7th959vWXM7OgICPCuY8/SY/c+GR0DLXbiYFYmXHGs98T1nS+6L1bvj3N/VdKd6viTVp+W9CdJv6q1wbRp0xoKhvZE776W/f6i6AgI8OVVn46OgAArNl8SHQFBONZ74vrOF90Xq3cSvU/O+T8lbcs5/zTn/D5JPa5CS9LSpUsbDof2Q+++ph7x0egICHD6hE9GR0CAKUPOio6AIBzrPXF954vui9U7id7W+e+6lNIbU0rHStq71gZ818ITvftidcITK9GeWIn2xbHeE9d3vui+WF2/Ey3pMymlvSSdI+nfJe0p6exaG/BdC0/07ovVCU+nT/gkvxNtiJVoXxzrPXF954vui9X76tzfzTlvyDnfnnOelHM+Luf8nVrbzJ7NC084ondf//NHVqYcLblpfnQEBLjmqcuiIyAIx3pPXN/5ovtidU2iU0pHpJSuSSnd3vnxUSmlT9TaZv58Lqwc0buvN42eFR0BAd5+9AeiIyDAqwdNj46AIBzrPXF954vui9X7O9FflvQxdf5udM75VknvqrXBggULGkuGtkTvvn76wDejIyDAD3/3tegICLB661XRERCEY70nru980X2xeifRQ3POv9zhtu21Npg6dWrfEqGt0buvY0dMio6AABMOmRwdAQHGDnh1dAQE4Vjvies7X3RfrN5J9F9SSodJypKUUvonSetqbbBy5coGo6Ed0buvP264JToCAtz58JroCAhw7/bboyMgCMd6T1zf+aL7YvW+OvcHJF0maWxK6X5JayW9u9YGY8eObTAa2hG9+9p3yEHRERBg/z0OkbZEp0Cr7b3b86MjIAjHek9c3/mi+2J1TaJzzndLel1KaXd1rF4/qY7fib6np23Wr1/flIBoL/Tua/PTG6MjIMDmbU9ER0CALdoUHQFBONZ7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\n",
+      "text/plain": [
+       "<Figure size 1224x360 with 5 Axes>"
+      ]
+     },
+     "metadata": {
+      "needs_background": "light"
+     },
+     "output_type": "display_data"
+    }
+   ],
+   "source": [
+    "draw_timeline(naive_timeline, \"Naive\", 15)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 25,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2020-09-23T03:57:31.221460Z",
+     "iopub.status.busy": "2020-09-23T03:57:31.220835Z",
+     "iopub.status.idle": "2020-09-23T03:57:32.165650Z",
+     "shell.execute_reply": "2020-09-23T03:57:32.166072Z"
+    },
+    "id": "DoovY7qr-jNR"
+   },
+   "outputs": [
+    {
+     "data": {
+      "image/png": "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k4AZise8J57jfdHeE9190b5a2010RBws6dcycywzv5WZp2Xm/8jM7Z0W3rp1a8+GxOD415u/U3oEFHL1TbtLj4ACeMx74jneF+090d0X7atNuomOiKHMfFjSz05n4YULF057KAyuZ805ovQIKOTZc48sPQIK4DHvied4X7T3RHdftK/W7kdcfUXSIklfjYhPSLpC0n0Td2bmx9otvHfv3p4MiMFy9/38iCNXd+/jxxw54jHvied4X7T3RHdftK/W8edEa/xnQ39P0s9LSknR+m/bTfS+ffu6Hg6D5/6H9pceAYXs2/9w6RFQAI95TzzH+6K9J7r7on21dpvop0TEWZK+ph9tnidkp4UXLFjQ5WgYRMf+WMc3bscMdRztLfGY98RzvC/ae6K7L9pXa/fGYgdr/EdZDUs6/IBfT3y0tX17x/cewwy041t3lh4Bhey4bU/pEVAAj3lPPMf7or0nuvuifbV2J9G7M/OPprvwsmXLpnspBtgrFh5TegQU8vKfPK70CCiAx7wnnuN90d4T3X3Rvlq7k+hoc19HGzZs6OZyDKi//rf/LD0CCvnfX76h9AgogMe8J57jfdHeE9190b5au030L3Sz8Pnnn9/N5RhQ5/z8CaVHQCHn/MKJpUdAATzmPfEc74v2nujui/bVJt1EZ+Zd3Sx8+umnd3M5BtRbP/Hl0iOgkLd+/IulR0ABPOY98Rzvi/ae6O6L9tXanUR35dJLL21qafSxv3rNi0qPgEL+6rUvKT0CCuAx74nneF+090R3X7Sv1tgmeuXKlU0tjT725s2cRrp680evKj0CCuAx74nneF+090R3X7Sv1tgm+rLLLmtqafSxDyx7cekRUMgHXndK6RFQAI95TzzH+6K9J7r7on21xjbRq1atampp9LHf/scvlR4Bhfz2x64uPQIK4DHvied4X7T3RHdftK/W2Cb6kksuaWpp9LE/f9ULS4+AQv781ZxIOuIx74nneF+090R3X7Sv1tgm+txzz21qafSxdf9ybekRUMi6z3+19AgogMe8J57jfdHeE9190b5aY5voM888s6ml0cd+66efXXoEFPLGFy4sPQIK4DHvied4X7T3RHdftK/W2CZ68+bNTS2NPvbJG24rPQIK+dR/3FJ6BBTAY94Tz/G+aO+J7r5oX62xTfTixYubWhp9bOTpc0qPgEJGjplbegQUwGPe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\n",
+      "text/plain": [
+       "<Figure size 1224x432 with 6 Axes>"
+      ]
+     },
+     "metadata": {
+      "needs_background": "light"
+     },
+     "output_type": "display_data"
+    }
+   ],
+   "source": [
+    "draw_timeline(optimized_timeline, \"Optimized\", 15)"
+   ]
+  }
+ ],
+ "metadata": {
+  "colab": {
+   "collapsed_sections": [],
+   "name": "data_performance.ipynb",
+   "toc_visible": true
+  },
+  "kernelspec": {
+   "display_name": "Python 3",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.6.9"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 0
+}

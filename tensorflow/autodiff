@@ -1,0 +1,1458 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "headers"
+   },
+   "source": [
+    "Project: /overview/_project.yaml\n",
+    "Book: /overview/_book.yaml\n",
+    "\n",
+    "<link rel=\"stylesheet\" href=\"/site-assets/css/style.css\">\n",
+    "\n",
+    "<!-- DO NOT EDIT! Automatically generated file. -->\n",
+    "\n",
+    "\n"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "qFdPvlXBOdUN"
+   },
+   "source": [
+    "# 그래디언트 및 자동 미분 소개"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "MfBg1C5NB3X0"
+   },
+   "source": [
+    "<table class=\"tfo-notebook-buttons\" align=\"left\">\n",
+    "  <td>     <a target=\"_blank\" href=\"https://www.tensorflow.org/guide/autodiff\" class=\"\"><img src=\"https://www.tensorflow.org/images/tf_logo_32px.png\">TensorFlow.org에서 보기</a>   </td>\n",
+    "  <td><a target=\"_blank\" href=\"https://colab.research.google.com/github/tensorflow/docs-l10n/blob/master/site/ko/guide/autodiff.ipynb\"><img src=\"https://www.tensorflow.org/images/colab_logo_32px.png\">Google Colab에서 실행</a></td>\n",
+    "  <td>     <a target=\"_blank\" href=\"https://github.com/tensorflow/docs-l10n/blob/master/site/ko/guide/autodiff.ipynb\" class=\"\"><img src=\"https://www.tensorflow.org/images/GitHub-Mark-32px.png\">GitHub에서 소스 보기</a>   </td>\n",
+    "  <td><a href=\"https://storage.googleapis.com/tensorflow_docs/docs-l10n/site/ko/guide/autodiff.ipynb\"><img src=\"https://www.tensorflow.org/images/download_logo_32px.png\">노트북 다운로드</a></td>\n",
+    "</table>"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "r6P32iYYV27b"
+   },
+   "source": [
+    "## 자동 미분 및 그래디언트\n",
+    "\n",
+    "[자동 미분](https://en.wikipedia.org/wiki/Automatic_differentiation)은 신경망 학습을 위한 [역전파](https://en.wikipedia.org/wiki/Backpropagation)와 같은 머신러닝 알고리즘을 구현하는 데 유용합니다.\n",
+    "\n",
+    "이 가이드에서는 특히 [즉시 실행](eager.ipynb)에서 TensorFlow로 그래디언트를 계산하는 방법을 알아봅니다."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "MUXex9ctTuDB"
+   },
+   "source": [
+    "## 설정"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 2,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2021-08-14T00:35:04.395369Z",
+     "iopub.status.busy": "2021-08-14T00:35:04.394833Z",
+     "iopub.status.idle": "2021-08-14T00:35:06.307698Z",
+     "shell.execute_reply": "2021-08-14T00:35:06.307194Z"
+    },
+    "id": "IqR2PQG4ZaZ0"
+   },
+   "outputs": [],
+   "source": [
+    "import numpy as np\n",
+    "import matplotlib.pyplot as plt\n",
+    "\n",
+    "import tensorflow as tf"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "xHxb-dlhMIzW"
+   },
+   "source": [
+    "## 그래디언트 계산하기\n",
+    "\n",
+    "자동으로 미분하기 위해 TensorFlow는 *정방향 패스* 동안 어떤 연산이 어떤 순서로 발생하는지 기억해야 합니다. 그런 다음 *역방향 패스* 동안 TensorFlow는 이 연산 목록을 역순으로 이동하여 그래디언트를 계산합니다."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "1CLWJl0QliB0"
+   },
+   "source": [
+    "## 그래디언트 테이프\n",
+    "\n",
+    "텐서플로는 자동 미분(주어진 입력 변수에 대한 연산의 그래디언트(gradient)를 계산하는 것)을 위한 [tf.GradientTape](https://www.tensorflow.org/api_docs/python/tf/GradientTape) API를 제공합니다. `tf.GradientTape`는 컨텍스트(context) 안에서 실행된 모든 연산을 테이프(tape)에 \"기록\"합니다. 그 다음 텐서플로는 [후진 방식 자동 미분(reverse mode differentiation)](https://en.wikipedia.org/wiki/Automatic_differentiation)을 사용해 테이프에 \"기록된\" 연산의 그래디언트를 계산합니다.\n",
+    "\n",
+    "예를 들면:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 3,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2021-08-14T00:35:06.312332Z",
+     "iopub.status.busy": "2021-08-14T00:35:06.311766Z",
+     "iopub.status.idle": "2021-08-14T00:35:07.868332Z",
+     "shell.execute_reply": "2021-08-14T00:35:07.868679Z"
+    },
+    "id": "Xq9GgTCP7a4A"
+   },
+   "outputs": [
+    {
+     "name": "stderr",
+     "output_type": "stream",
+     "text": [
+      "2021-08-14 00:35:06.963604: I tensorflow/stream_executor/cuda/cuda_gpu_executor.cc:937] successful NUMA node read from SysFS had negative value (-1), but there must be at least one NUMA node, so returning NUMA node zero\n"
+     ]
+    },
+    {
+     "name": "stderr",
+     "output_type": "stream",
+     "text": [
+      "2021-08-14 00:35:06.971688: I tensorflow/stream_executor/cuda/cuda_gpu_executor.cc:937] successful NUMA node read from SysFS had negative value (-1), but there must be at least one NUMA node, so returning NUMA node zero\n",
+      "2021-08-14 00:35:06.972576: I tensorflow/stream_executor/cuda/cuda_gpu_executor.cc:937] successful NUMA node read from SysFS had negative value (-1), but there must be at least one NUMA node, so returning NUMA node zero\n",
+      "2021-08-14 00:35:06.974692: I tensorflow/core/platform/cpu_feature_guard.cc:142] This TensorFlow binary is optimized with oneAPI Deep Neural Network Library (oneDNN) to use the following CPU instructions in performance-critical operations:  AVX2 AVX512F FMA\n",
+      "To enable them in other operations, rebuild TensorFlow with the appropriate compiler flags.\n",
+      "2021-08-14 00:35:06.975239: I tensorflow/stream_executor/cuda/cuda_gpu_executor.cc:937] successful NUMA node read from SysFS had negative value (-1), but there must be at least one NUMA node, so returning NUMA node zero\n",
+      "2021-08-14 00:35:06.976172: I tensorflow/stream_executor/cuda/cuda_gpu_executor.cc:937] successful NUMA node read from SysFS had negative value (-1), but there must be at least one NUMA node, so returning NUMA node zero\n",
+      "2021-08-14 00:35:06.976989: I tensorflow/stream_executor/cuda/cuda_gpu_executor.cc:937] successful NUMA node read from SysFS had negative value (-1), but there must be at least one NUMA node, so returning NUMA node zero\n",
+      "2021-08-14 00:35:07.569877: I tensorflow/stream_executor/cuda/cuda_gpu_executor.cc:937] successful NUMA node read from SysFS had negative value (-1), but there must be at least one NUMA node, so returning NUMA node zero\n",
+      "2021-08-14 00:35:07.570942: I tensorflow/stream_executor/cuda/cuda_gpu_executor.cc:937] successful NUMA node read from SysFS had negative value (-1), but there must be at least one NUMA node, so returning NUMA node zero\n",
+      "2021-08-14 00:35:07.571814: I tensorflow/stream_executor/cuda/cuda_gpu_executor.cc:937] successful NUMA node read from SysFS had negative value (-1), but there must be at least one NUMA node, so returning NUMA node zero\n",
+      "2021-08-14 00:35:07.572666: I tensorflow/core/common_runtime/gpu/gpu_device.cc:1510] Created device /job:localhost/replica:0/task:0/device:GPU:0 with 14648 MB memory:  -> device: 0, name: Tesla V100-SXM2-16GB, pci bus id: 0000:00:05.0, compute capability: 7.0\n"
+     ]
+    }
+   ],
+   "source": [
+    "x = tf.Variable(3.0)\n",
+    "\n",
+    "with tf.GradientTape() as tape:\n",
+    "  y = x**2"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "CR9tFAP_7cra"
+   },
+   "source": [
+    "일부 연산을 기록한 후에는 `GradientTape.gradient(target, sources)`를 사용하여 일부 소스(종종 모델 변수)에 상대적인 일부 대상(종종 손실)의 그래디언트를 계산합니다."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 4,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2021-08-14T00:35:07.873501Z",
+     "iopub.status.busy": "2021-08-14T00:35:07.872913Z",
+     "iopub.status.idle": "2021-08-14T00:35:07.878793Z",
+     "shell.execute_reply": "2021-08-14T00:35:07.879219Z"
+    },
+    "id": "LsvrwF6bHroC"
+   },
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "6.0"
+      ]
+     },
+     "execution_count": 4,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "# dy = 2x * dx\n",
+    "dy_dx = tape.gradient(y, x)\n",
+    "dy_dx.numpy()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "Q2_aqsO25Vx1"
+   },
+   "source": [
+    "위의 예제는 스칼라를 사용하지만, `tf.GradientTape`는 모든 텐서에서 쉽게 작동합니다."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 5,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2021-08-14T00:35:07.884851Z",
+     "iopub.status.busy": "2021-08-14T00:35:07.884206Z",
+     "iopub.status.idle": "2021-08-14T00:35:08.296859Z",
+     "shell.execute_reply": "2021-08-14T00:35:08.296315Z"
+    },
+    "id": "vacZ3-Ws5VdV"
+   },
+   "outputs": [],
+   "source": [
+    "w = tf.Variable(tf.random.normal((3, 2)), name='w')\n",
+    "b = tf.Variable(tf.zeros(2, dtype=tf.float32), name='b')\n",
+    "x = [[1., 2., 3.]]\n",
+    "\n",
+    "with tf.GradientTape(persistent=True) as tape:\n",
+    "  y = x @ w + b\n",
+    "  loss = tf.reduce_mean(y**2)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "i4eXOkrQ-9Pb"
+   },
+   "source": [
+    "두 변수 모두에 대해 `loss`의 그래디언트를 가져오려면, 두 변수를 `gradient` 메서드에 소스로 전달할 수 있습니다. 테이프는 소스가 전달되는 방식에 대해 융통성이 있으며 목록 또는 사전의 중첩된 조합을 허용하고 같은 방식으로 구조화된 그래디언트를 반환합니다(`tf.nest` 참조)."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 6,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2021-08-14T00:35:08.302002Z",
+     "iopub.status.busy": "2021-08-14T00:35:08.301460Z",
+     "iopub.status.idle": "2021-08-14T00:35:08.306154Z",
+     "shell.execute_reply": "2021-08-14T00:35:08.306541Z"
+    },
+    "id": "luOtK1Da_BR0"
+   },
+   "outputs": [],
+   "source": [
+    "[dl_dw, dl_db] = tape.gradient(loss, [w, b])"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "Ei4iVXi6qgM7"
+   },
+   "source": [
+    "각 소스에 대한 그래디언트는 소스의 형상을 갖습니다."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 7,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2021-08-14T00:35:08.311090Z",
+     "iopub.status.busy": "2021-08-14T00:35:08.310494Z",
+     "iopub.status.idle": "2021-08-14T00:35:08.313603Z",
+     "shell.execute_reply": "2021-08-14T00:35:08.313139Z"
+    },
+    "id": "aYbWRFPZqk4U"
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "(3, 2)\n",
+      "(3, 2)\n"
+     ]
+    }
+   ],
+   "source": [
+    "print(w.shape)\n",
+    "print(dl_dw.shape)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "dI_SzxHsvao1"
+   },
+   "source": [
+    "다음은 그래디언트 계산입니다. 이번에는 변수의 사전을 전달합니다."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 8,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2021-08-14T00:35:08.318095Z",
+     "iopub.status.busy": "2021-08-14T00:35:08.317498Z",
+     "iopub.status.idle": "2021-08-14T00:35:08.322517Z",
+     "shell.execute_reply": "2021-08-14T00:35:08.322891Z"
+    },
+    "id": "d73cY6NOuaMd"
+   },
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "<tf.Tensor: shape=(2,), dtype=float32, numpy=array([2.42549   , 0.29411206], dtype=float32)>"
+      ]
+     },
+     "execution_count": 8,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "my_vars = {\n",
+    "    'w': w,\n",
+    "    'b': b\n",
+    "}\n",
+    "\n",
+    "grad = tape.gradient(loss, my_vars)\n",
+    "grad['b']"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "HZ2LvHifEMgO"
+   },
+   "source": [
+    "## 모델에 대한 그래디언트\n",
+    "\n",
+    "[검사점 설정](checkpoint.ipynb) 및 [내보내기](saved_model.ipynb)를 위해 `tf.Variables`를 `tf.Module` 또는 해당 서브 클래스(<code>layers.Layer</code>와 <code>keras.Model</code>) 중 하나로 수집하는 것이 일반적입니다.\n",
+    "\n",
+    "대부분의 경우 모델의 훈련 가능한 변수에 대한 그래디언트를 계산하려고 합니다. `tf.Module`의 모든 서브 클래스는 `Module.trainable_variables` 속성에서 변수를 집계하므로 몇 줄의 코드로 이러한 그래디언트를 계산할 수 있습니다. "
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 9,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2021-08-14T00:35:08.327987Z",
+     "iopub.status.busy": "2021-08-14T00:35:08.327411Z",
+     "iopub.status.idle": "2021-08-14T00:35:08.475552Z",
+     "shell.execute_reply": "2021-08-14T00:35:08.475948Z"
+    },
+    "id": "JvesHtbQESc-"
+   },
+   "outputs": [],
+   "source": [
+    "layer = tf.keras.layers.Dense(2, activation='relu')\n",
+    "x = tf.constant([[1., 2., 3.]])\n",
+    "\n",
+    "with tf.GradientTape() as tape:\n",
+    "  # Forward pass\n",
+    "  y = layer(x)\n",
+    "  loss = tf.reduce_mean(y**2)\n",
+    "\n",
+    "# Calculate gradients with respect to every trainable variable\n",
+    "grad = tape.gradient(loss, layer.trainable_variables)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 10,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2021-08-14T00:35:08.481055Z",
+     "iopub.status.busy": "2021-08-14T00:35:08.480346Z",
+     "iopub.status.idle": "2021-08-14T00:35:08.483297Z",
+     "shell.execute_reply": "2021-08-14T00:35:08.482854Z"
+    },
+    "id": "PR_ezr6UFrpI"
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "dense/kernel:0, shape: (3, 2)\n",
+      "dense/bias:0, shape: (2,)\n"
+     ]
+    }
+   ],
+   "source": [
+    "for var, g in zip(layer.trainable_variables, grad):\n",
+    "  print(f'{var.name}, shape: {g.shape}')"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "f6Gx6LS714zR"
+   },
+   "source": [
+    "<a id=\"watches\"></a>\n",
+    "\n",
+    "## 테이프의 감시 대상 제어하기"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "N4VlqKFzzGaC"
+   },
+   "source": [
+    "기본 동작은 훈련 가능한 `tf.Variable`에 액세스한 후 모든 연산을 기록하는 것입니다. 그 이유는 다음과 같습니다.\n",
+    "\n",
+    "- 테이프는 역방향 패스의 그래디언트를 계산하기 위해 정방향 패스에 기록할 연산을 알아야 합니다.\n",
+    "- 테이프는 중간 출력에 대한 참조를 보유하므로 불필요한 연산을 기록하지 않습니다.\n",
+    "- 가장 일반적인 사용 사례는 모든 모델의 훈련 가능한 변수에 대해 손실의 그래디언트를 계산하는 것입니다.\n",
+    "\n",
+    "예를 들어, 다음은 `tf.Tensor`가 기본적으로 \"감시\"되지 않고 `tf.Variable`을 훈련할 수 없기 때문에 그래디언트를 계산하지 못합니다."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 11,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2021-08-14T00:35:08.488975Z",
+     "iopub.status.busy": "2021-08-14T00:35:08.488365Z",
+     "iopub.status.idle": "2021-08-14T00:35:08.493573Z",
+     "shell.execute_reply": "2021-08-14T00:35:08.493970Z"
+    },
+    "id": "Kj9gPckdB37a"
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "tf.Tensor(6.0, shape=(), dtype=float32)\n",
+      "None\n",
+      "None\n",
+      "None\n"
+     ]
+    }
+   ],
+   "source": [
+    "# A trainable variable\n",
+    "x0 = tf.Variable(3.0, name='x0')\n",
+    "# Not trainable\n",
+    "x1 = tf.Variable(3.0, name='x1', trainable=False)\n",
+    "# Not a Variable: A variable + tensor returns a tensor.\n",
+    "x2 = tf.Variable(2.0, name='x2') + 1.0\n",
+    "# Not a variable\n",
+    "x3 = tf.constant(3.0, name='x3')\n",
+    "\n",
+    "with tf.GradientTape() as tape:\n",
+    "  y = (x0**2) + (x1**2) + (x2**2)\n",
+    "\n",
+    "grad = tape.gradient(y, [x0, x1, x2, x3])\n",
+    "\n",
+    "for g in grad:\n",
+    "  print(g)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "RkcpQnLgNxgi"
+   },
+   "source": [
+    "`GradientTape.watched_variables` 메서드를 사용하여 테이프에서 감시 중인 변수를 나열할 수 있습니다."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 12,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2021-08-14T00:35:08.498367Z",
+     "iopub.status.busy": "2021-08-14T00:35:08.497812Z",
+     "iopub.status.idle": "2021-08-14T00:35:08.500777Z",
+     "shell.execute_reply": "2021-08-14T00:35:08.501121Z"
+    },
+    "id": "hwNwjW1eAkib"
+   },
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "['x0:0']"
+      ]
+     },
+     "execution_count": 12,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "[var.name for var in tape.watched_variables()]"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "NB9I1uFvB4tf"
+   },
+   "source": [
+    "`tf.GradientTape`는 사용자가 감시 대상 또는 감시 예외 대상을 제어할 수 있는 후크를 제공합니다.\n",
+    "\n",
+    "`tf.Tensor`에 대한 그래디언트를 기록하려면 `GradientTape.watch(x)`를 호출해야 합니다."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 13,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2021-08-14T00:35:08.505730Z",
+     "iopub.status.busy": "2021-08-14T00:35:08.505143Z",
+     "iopub.status.idle": "2021-08-14T00:35:08.508029Z",
+     "shell.execute_reply": "2021-08-14T00:35:08.508390Z"
+    },
+    "id": "tVN1QqFRDHBK"
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "6.0\n"
+     ]
+    }
+   ],
+   "source": [
+    "x = tf.constant(3.0)\n",
+    "with tf.GradientTape() as tape:\n",
+    "  tape.watch(x)\n",
+    "  y = x**2\n",
+    "\n",
+    "# dy = 2x * dx\n",
+    "dy_dx = tape.gradient(y, x)\n",
+    "print(dy_dx.numpy())"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "qxsiYnf2DN8K"
+   },
+   "source": [
+    "반대로, 모든 `tf.Variables`을 감시하는 기본 동작을 비활성화하려면, 그래디언트 테이프를 만들 때 `watch_accessed_variables=False`를 설정합니다. 이 계산은 두 가지 변수를 사용하지만, 변수 중 하나의 그래디언트만 연결합니다."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 14,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2021-08-14T00:35:08.513169Z",
+     "iopub.status.busy": "2021-08-14T00:35:08.512588Z",
+     "iopub.status.idle": "2021-08-14T00:35:08.516833Z",
+     "shell.execute_reply": "2021-08-14T00:35:08.516375Z"
+    },
+    "id": "7QPzwWvSEwIp"
+   },
+   "outputs": [],
+   "source": [
+    "x0 = tf.Variable(0.0)\n",
+    "x1 = tf.Variable(10.0)\n",
+    "\n",
+    "with tf.GradientTape(watch_accessed_variables=False) as tape:\n",
+    "  tape.watch(x1)\n",
+    "  y0 = tf.math.sin(x0)\n",
+    "  y1 = tf.nn.softplus(x1)\n",
+    "  y = y0 + y1\n",
+    "  ys = tf.reduce_sum(y)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "TRduLbE1H2IJ"
+   },
+   "source": [
+    "`x0`에서 `GradientTape.watch`가 호출되지 않았으므로 이에 대한 그래디언트가 계산되지 않습니다."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 15,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2021-08-14T00:35:08.520585Z",
+     "iopub.status.busy": "2021-08-14T00:35:08.519102Z",
+     "iopub.status.idle": "2021-08-14T00:35:08.523846Z",
+     "shell.execute_reply": "2021-08-14T00:35:08.524231Z"
+    },
+    "id": "e6GM-3evH1Sz"
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "dy/dx0: None\n",
+      "dy/dx1: 0.9999546\n"
+     ]
+    }
+   ],
+   "source": [
+    "# dys/dx1 = exp(x1) / (1 + exp(x1)) = sigmoid(x1)\n",
+    "grad = tape.gradient(ys, {'x0': x0, 'x1': x1})\n",
+    "\n",
+    "print('dy/dx0:', grad['x0'])\n",
+    "print('dy/dx1:', grad['x1'].numpy())"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "2g1nKB6P-OnA"
+   },
+   "source": [
+    "## 중간 결과\n",
+    "\n",
+    "`tf.GradientTape` 컨텍스트 내에서 계산된 중간값과 관련하여 출력의 그래디언트를 요청할 수도 있습니다."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 16,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2021-08-14T00:35:08.528528Z",
+     "iopub.status.busy": "2021-08-14T00:35:08.527965Z",
+     "iopub.status.idle": "2021-08-14T00:35:08.530932Z",
+     "shell.execute_reply": "2021-08-14T00:35:08.531301Z"
+    },
+    "id": "7XaPRAwUyYms"
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "18.0\n"
+     ]
+    }
+   ],
+   "source": [
+    "x = tf.constant(3.0)\n",
+    "\n",
+    "with tf.GradientTape() as tape:\n",
+    "  tape.watch(x)\n",
+    "  y = x * x\n",
+    "  z = y * y\n",
+    "\n",
+    "# Use the tape to compute the gradient of z with respect to the\n",
+    "# intermediate value y.\n",
+    "# dz_dy = 2 * y and y = x ** 2 = 9\n",
+    "print(tape.gradient(z, y).numpy())"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "ISkXuY7YzIcS"
+   },
+   "source": [
+    "기본적으로, `GradientTape.gradient` 메서드가 호출되면 `GradientTape`가 보유한 리소스가 해제됩니다. 동일한 계산에 대해 여러 그래디언트를 계산하려면 `persistent=True` 그래디언트 테이프를 만듭니다. 이렇게 하면 테이프 객체가 가비지 수집될 때 리소스가 해제되면 `gradient` 메서드를 여러 번 호출할 수 있습니다. 예를 들면 다음과 같습니다."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 17,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2021-08-14T00:35:08.536324Z",
+     "iopub.status.busy": "2021-08-14T00:35:08.535762Z",
+     "iopub.status.idle": "2021-08-14T00:35:08.540184Z",
+     "shell.execute_reply": "2021-08-14T00:35:08.539719Z"
+    },
+    "id": "zZaCm3-9zVCi"
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "[  4. 108.]\n",
+      "[2. 6.]\n"
+     ]
+    }
+   ],
+   "source": [
+    "x = tf.constant([1, 3.0])\n",
+    "with tf.GradientTape(persistent=True) as tape:\n",
+    "  tape.watch(x)\n",
+    "  y = x * x\n",
+    "  z = y * y\n",
+    "\n",
+    "print(tape.gradient(z, x).numpy())  # 108.0 (4 * x**3 at x = 3)\n",
+    "print(tape.gradient(y, x).numpy())  # 6.0 (2 * x)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 18,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2021-08-14T00:35:08.543396Z",
+     "iopub.status.busy": "2021-08-14T00:35:08.542844Z",
+     "iopub.status.idle": "2021-08-14T00:35:08.545124Z",
+     "shell.execute_reply": "2021-08-14T00:35:08.544651Z"
+    },
+    "id": "j8bv_jQFg6CN"
+   },
+   "outputs": [],
+   "source": [
+    "del tape   # Drop the reference to the tape"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "O_ZY-9BUB7vX"
+   },
+   "source": [
+    "## 성능에 대한 참고 사항\n",
+    "\n",
+    "- 그래디언트 테이프 컨텍스트 내에서 연산을 수행하는 것과 관련하여 작은 오버헤드가 있습니다. 대부분의 Eager 실행에는 상당한 비용이 들지 않지만, 필요한 경우에만 테이프 컨텍스트를 사용해야 합니다.\n",
+    "\n",
+    "- 그래디언트 테이프는 메모리를 사용하여 역방향 패스 동안 사용하기 위해 입력 및 출력을 포함한 중간 결과를 저장합니다.\n",
+    "\n",
+    "    효율성을 위해 (`ReLU`와 같은) 일부 연산은 중간 결과를 유지할 필요가 없으며 정방향 패스 동안에 정리됩니다. 그러나 테이프에서 `persistent=True`를 사용하면 *아무것도 삭제되지 않으며* 최대 메모리 사용량이 높아집니다."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "9dLBpZsJebFq"
+   },
+   "source": [
+    "## 스칼라가 아닌 대상의 그래디언트"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "7pldU9F5duP2"
+   },
+   "source": [
+    "그래디언트는 기본적으로 스칼라에 대한 연산입니다."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 19,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2021-08-14T00:35:08.549506Z",
+     "iopub.status.busy": "2021-08-14T00:35:08.548978Z",
+     "iopub.status.idle": "2021-08-14T00:35:08.553701Z",
+     "shell.execute_reply": "2021-08-14T00:35:08.553244Z"
+    },
+    "id": "qI0sDV_WeXBb"
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "4.0\n",
+      "-0.25\n"
+     ]
+    }
+   ],
+   "source": [
+    "x = tf.Variable(2.0)\n",
+    "with tf.GradientTape(persistent=True) as tape:\n",
+    "  y0 = x**2\n",
+    "  y1 = 1 / x\n",
+    "\n",
+    "print(tape.gradient(y0, x).numpy())\n",
+    "print(tape.gradient(y1, x).numpy())"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "COEyYp34fxj4"
+   },
+   "source": [
+    "따라서, 여러 대상의 그래디언트를 요청하면 각 소스의 결과는 다음과 같습니다.\n",
+    "\n",
+    "- 대상의 합계 또는 그에 상응하는 그래디언트\n",
+    "- 각 대상의 그래디언트의 합계"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 20,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2021-08-14T00:35:08.558039Z",
+     "iopub.status.busy": "2021-08-14T00:35:08.557522Z",
+     "iopub.status.idle": "2021-08-14T00:35:08.561094Z",
+     "shell.execute_reply": "2021-08-14T00:35:08.561466Z"
+    },
+    "id": "o4a6_YOcfWKS"
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "3.75\n"
+     ]
+    }
+   ],
+   "source": [
+    "x = tf.Variable(2.0)\n",
+    "with tf.GradientTape() as tape:\n",
+    "  y0 = x**2\n",
+    "  y1 = 1 / x\n",
+    "\n",
+    "print(tape.gradient({'y0': y0, 'y1': y1}, x).numpy())"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "uvP-mkBMgbym"
+   },
+   "source": [
+    "마찬가지로, 대상이 스칼라가 아닌 경우 합계의 그래디언트가 계산됩니다."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 21,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2021-08-14T00:35:08.566112Z",
+     "iopub.status.busy": "2021-08-14T00:35:08.565392Z",
+     "iopub.status.idle": "2021-08-14T00:35:08.569378Z",
+     "shell.execute_reply": "2021-08-14T00:35:08.568948Z"
+    },
+    "id": "DArPWqsSh5un"
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "7.0\n"
+     ]
+    }
+   ],
+   "source": [
+    "x = tf.Variable(2.)\n",
+    "\n",
+    "with tf.GradientTape() as tape:\n",
+    "  y = x * [3., 4.]\n",
+    "\n",
+    "print(tape.gradient(y, x).numpy())"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "flDbx68Zh5Lb"
+   },
+   "source": [
+    "이렇게 하면, 손실 컬렉션 합계의 그래디언트 또는 요소별 손실 계산 합계의 그래디언트를 간단하게 구할 수 있습니다.\n",
+    "\n",
+    "각 항목에 대해 별도의 그래디언트가 필요한 경우, [야고비안](advanced_autodiff.ipynb#jacobians)을 참조하세요."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "iwFswok8RAly"
+   },
+   "source": [
+    "어떤 경우에는 야고비안을 건너뛸 수 있습니다. 요소별 계산의 경우, 각 요소가 독립적이므로 합의 그래디언트는 입력 요소와 관련하여 각 요소의 미분을 제공합니다."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 22,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2021-08-14T00:35:08.574596Z",
+     "iopub.status.busy": "2021-08-14T00:35:08.573571Z",
+     "iopub.status.idle": "2021-08-14T00:35:08.581589Z",
+     "shell.execute_reply": "2021-08-14T00:35:08.581943Z"
+    },
+    "id": "JQvk_jnMmTDS"
+   },
+   "outputs": [],
+   "source": [
+    "x = tf.linspace(-10.0, 10.0, 200+1)\n",
+    "\n",
+    "with tf.GradientTape() as tape:\n",
+    "  tape.watch(x)\n",
+    "  y = tf.nn.sigmoid(x)\n",
+    "\n",
+    "dy_dx = tape.gradient(y, x)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 23,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2021-08-14T00:35:08.604979Z",
+     "iopub.status.busy": "2021-08-14T00:35:08.597630Z",
+     "iopub.status.idle": "2021-08-14T00:35:08.800682Z",
+     "shell.execute_reply": "2021-08-14T00:35:08.801117Z"
+    },
+    "id": "e_f2QgDPmcPE"
+   },
+   "outputs": [
+    {
+     "data": {
+      "image/png": "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\n",
+      "text/plain": [
+       "<Figure size 432x288 with 1 Axes>"
+      ]
+     },
+     "metadata": {
+      "needs_background": "light"
+     },
+     "output_type": "display_data"
+    }
+   ],
+   "source": [
+    "plt.plot(x, y, label='y')\n",
+    "plt.plot(x, dy_dx, label='dy/dx')\n",
+    "plt.legend()\n",
+    "_ = plt.xlabel('x')"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "6kADybtQzYj4"
+   },
+   "source": [
+    "## 흐름 제어하기\n",
+    "\n",
+    "그래디언트 테이프는 실행되는 연산을 기록하기 때문에 Python 제어 흐름이 자연스럽게 처리됩니다(예: `if` 및 `while` 구문).\n",
+    "\n",
+    "여기서는 `if`의 각 분기에 서로 다른 변수가 사용됩니다. 그래디언트는 사용된 변수에만 연결됩니다."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 24,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2021-08-14T00:35:08.808363Z",
+     "iopub.status.busy": "2021-08-14T00:35:08.807367Z",
+     "iopub.status.idle": "2021-08-14T00:35:08.812478Z",
+     "shell.execute_reply": "2021-08-14T00:35:08.812876Z"
+    },
+    "id": "ciFLizhrrjy7"
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "tf.Tensor(1.0, shape=(), dtype=float32)\n",
+      "None\n"
+     ]
+    }
+   ],
+   "source": [
+    "x = tf.constant(1.0)\n",
+    "\n",
+    "v0 = tf.Variable(2.0)\n",
+    "v1 = tf.Variable(2.0)\n",
+    "\n",
+    "with tf.GradientTape(persistent=True) as tape:\n",
+    "  tape.watch(x)\n",
+    "  if x > 0.0:\n",
+    "    result = v0\n",
+    "  else:\n",
+    "    result = v1**2 \n",
+    "\n",
+    "dv0, dv1 = tape.gradient(result, [v0, v1])\n",
+    "\n",
+    "print(dv0)\n",
+    "print(dv1)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "HKnLaiapsjeP"
+   },
+   "source": [
+    "제어문 자체는 미분할 수 없으므로 그래디언트 기반 최적화 프로그램에는 보이지 않습니다.\n",
+    "\n",
+    "위 예제에서 `x` 값에 따라 테이프는 `result = v0` 또는 `result = v1**2`를 기록합니다. `x`에 대한 그래디언트는 항상 `None`입니다."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 25,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2021-08-14T00:35:08.817475Z",
+     "iopub.status.busy": "2021-08-14T00:35:08.816777Z",
+     "iopub.status.idle": "2021-08-14T00:35:08.820020Z",
+     "shell.execute_reply": "2021-08-14T00:35:08.819420Z"
+    },
+    "id": "8k05WmuAwPm7"
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "None\n"
+     ]
+    }
+   ],
+   "source": [
+    "dx = tape.gradient(result, x)\n",
+    "\n",
+    "print(dx)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "egypBxISAHhx"
+   },
+   "source": [
+    "## `None`의 그래디언트 구하기\n",
+    "\n",
+    "대상이 소스에 연결되어 있지 않으면 그래디언트는 `None`입니다.\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 26,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2021-08-14T00:35:08.825307Z",
+     "iopub.status.busy": "2021-08-14T00:35:08.824262Z",
+     "iopub.status.idle": "2021-08-14T00:35:08.828326Z",
+     "shell.execute_reply": "2021-08-14T00:35:08.828735Z"
+    },
+    "id": "CU185WDM81Ut"
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "None\n"
+     ]
+    }
+   ],
+   "source": [
+    "x = tf.Variable(2.)\n",
+    "y = tf.Variable(3.)\n",
+    "\n",
+    "with tf.GradientTape() as tape:\n",
+    "  z = y * y\n",
+    "print(tape.gradient(z, x))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "sZbKpHfBRJym"
+   },
+   "source": [
+    "여기서 `z`는 명확하게 `x`에 연결되어 있지 않지만, 그래디언트의 연결을 끊을 수 있는 몇 가지 덜 명확한 방법이 있습니다."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "eHDzDOiQ8xmw"
+   },
+   "source": [
+    "### 1. 변수를 텐서로 대체했습니다.\n",
+    "\n",
+    "[ \"테이프의 감시 대상 제어\"{/ a0} 섹션에서 테이프가 자동으로 `tf.Variable`을 감시하지만 `tf.Tensor`는 감시하지 않는 것을 살펴보았습니다.]()\n",
+    "\n",
+    "한 가지 일반적인 오류는 `Variable.assign`를 사용하여 `tf.Variable`를 업데이트하는 대신 실수로 `tf.Variable`을 `tf.Tensor`로 대체하는 것입니다. 예를 들면, 다음과 같습니다."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 27,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2021-08-14T00:35:08.834863Z",
+     "iopub.status.busy": "2021-08-14T00:35:08.833710Z",
+     "iopub.status.idle": "2021-08-14T00:35:08.838660Z",
+     "shell.execute_reply": "2021-08-14T00:35:08.839101Z"
+    },
+    "id": "QPKY4Tn9zX7_"
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "ResourceVariable : tf.Tensor(1.0, shape=(), dtype=float32)\n",
+      "EagerTensor : None\n"
+     ]
+    }
+   ],
+   "source": [
+    "x = tf.Variable(2.0)\n",
+    "\n",
+    "for epoch in range(2):\n",
+    "  with tf.GradientTape() as tape:\n",
+    "    y = x+1\n",
+    "\n",
+    "  print(type(x).__name__, \":\", tape.gradient(y, x))\n",
+    "  x = x + 1   # This should be `x.assign_add(1)`"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "3gwZKxgA97an"
+   },
+   "source": [
+    "### 2. TensorFlow 외부에서 계산했습니다.\n",
+    "\n",
+    "계산에서 TensorFlow를 종료하면 테이프가 그래디언트 경로를 기록할 수 없습니다. 예를 들면, 다음과 같습니다."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 28,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2021-08-14T00:35:08.845105Z",
+     "iopub.status.busy": "2021-08-14T00:35:08.844080Z",
+     "iopub.status.idle": "2021-08-14T00:35:08.848529Z",
+     "shell.execute_reply": "2021-08-14T00:35:08.847968Z"
+    },
+    "id": "jmoLCDJb_yw1"
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "None\n"
+     ]
+    }
+   ],
+   "source": [
+    "x = tf.Variable([[1.0, 2.0],\n",
+    "                 [3.0, 4.0]], dtype=tf.float32)\n",
+    "\n",
+    "with tf.GradientTape() as tape:\n",
+    "  x2 = x**2\n",
+    "\n",
+    "  # This step is calculated with NumPy\n",
+    "  y = np.mean(x2, axis=0)\n",
+    "\n",
+    "  # Like most ops, reduce_mean will cast the NumPy array to a constant tensor\n",
+    "  # using `tf.convert_to_tensor`.\n",
+    "  y = tf.reduce_mean(y, axis=0)\n",
+    "\n",
+    "print(tape.gradient(y, x))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "p3YVfP3R-tp7"
+   },
+   "source": [
+    "### 3. 정수 또는 문자열을 통해 그래디언트를 구했습니다.\n",
+    "\n",
+    "정수와 문자열은 구별할 수 없습니다. 계산 경로에서 이러한 데이터 유형을 사용하면 그래디언트는 없습니다.\n",
+    "\n",
+    "아무도 문자열을 미분할 것으로 기대하지는 않지만, `dtype`을 지정하지 않으면 실수로 `int` 상수 또는 변수를 만들기 쉽습니다."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 29,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2021-08-14T00:35:08.853818Z",
+     "iopub.status.busy": "2021-08-14T00:35:08.852934Z",
+     "iopub.status.idle": "2021-08-14T00:35:08.857672Z",
+     "shell.execute_reply": "2021-08-14T00:35:08.858052Z"
+    },
+    "id": "9jlHXHqfASU3"
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "WARNING:tensorflow:The dtype of the watched tensor must be floating (e.g. tf.float32), got tf.int32\n"
+     ]
+    },
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "WARNING:tensorflow:The dtype of the target tensor must be floating (e.g. tf.float32) when calling GradientTape.gradient, got tf.int32\n"
+     ]
+    },
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "WARNING:tensorflow:The dtype of the source tensor must be floating (e.g. tf.float32) when calling GradientTape.gradient, got tf.int32\n"
+     ]
+    },
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "None\n"
+     ]
+    }
+   ],
+   "source": [
+    "x = tf.constant(10)\n",
+    "\n",
+    "with tf.GradientTape() as g:\n",
+    "  g.watch(x)\n",
+    "  y = x * x\n",
+    "\n",
+    "print(g.gradient(y, x))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "RsdP_mTHX9L1"
+   },
+   "source": [
+    "TensorFlow는 유형 간에 자동으로 전송되지 않으므로 실제로 그래디언트가 누락되는 대신 유형 오류가 발생합니다."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "WyAZ7C8qCEs6"
+   },
+   "source": [
+    "### 5. 상태 저장 개체를 통해 그래디언트를 구했습니다.\n",
+    "\n",
+    "상태가 그래디언트를 중지합니다. 상태 저장 객체에서 읽을 때 테이프는 현재 상태만 볼 수 있으며 현재 상태에 이르게 된 기록은 볼 수 없습니다.\n",
+    "\n",
+    "`tf.Tensor`는 변경할 수 없습니다. 텐서가 작성된 후에는 변경할 수 없습니다. *값*은 있지만 *상태는* 없습니다. 지금까지 논의된 모든 연산은 상태 비저장입니다. `tf.matmul`의 출력은 입력에만 의존합니다.\n",
+    "\n",
+    "`tf.Variable`은 내부 상태와 값을 갖습니다. 변수를 사용하면 상태를 읽습니다. 변수와 관련하여 그래디언트를 계산하는 것이 일반적이지만, 변수의 상태는 그래디언트 계산이 더 멀리 돌아가지 않도록 차단합니다. 예를 들면, 다음과 같습니다.\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 30,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2021-08-14T00:35:08.862166Z",
+     "iopub.status.busy": "2021-08-14T00:35:08.860396Z",
+     "iopub.status.idle": "2021-08-14T00:35:08.865877Z",
+     "shell.execute_reply": "2021-08-14T00:35:08.866235Z"
+    },
+    "id": "C1tLeeRFE479"
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "None\n"
+     ]
+    }
+   ],
+   "source": [
+    "x0 = tf.Variable(3.0)\n",
+    "x1 = tf.Variable(0.0)\n",
+    "\n",
+    "with tf.GradientTape() as tape:\n",
+    "  # Update x1 = x1 + x0.\n",
+    "  x1.assign_add(x0)\n",
+    "  # The tape starts recording from x1.\n",
+    "  y = x1**2   # y = (x1 + x0)**2\n",
+    "\n",
+    "# This doesn't work.\n",
+    "print(tape.gradient(y, x0))   #dy/dx0 = 2*(x1 + x0)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "xKA92-dqF2r-"
+   },
+   "source": [
+    "마찬가지로, `tf.data.Dataset` 반복기(iterator)와 `tf.queue`는 상태 저장이며 이들을 통과하는 텐서의 모든 그래디언트를 중지합니다."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "HHvcDGIbOj2I"
+   },
+   "source": [
+    "## 그래디언트가 등록되지 않음"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "aoc-A6AxVqry"
+   },
+   "source": [
+    "일부 `tf.Operation`는 **미분 불가능한 것으로 등록되어** `None`을 반환합니다. 다른 연산에는 **그래디언트가 등록되지 않았습니다**.\n",
+    "\n",
+    "`tf.raw_ops` 페이지에는 그래디언트가 등록된 저수준 op가 표시됩니다.\n",
+    "\n",
+    "그래디언트가 등록되지 않은 float op를 통해 그래디언트를 얻고자 시도하면 테이프가 자동으로 `None`을 반환하는 대신 오류가 발생합니다. 이렇게 하면 무언가 잘못되었다는 것을 알 수 있습니다.\n",
+    "\n",
+    "예를 들어, `tf.image.adjust_contrast` 함수는 그래디언트를 가질 수 있지만 그래디언트는 구현되지 않은 `raw_ops.AdjustContrastv2`를 래핑합니다.\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 31,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2021-08-14T00:35:08.871525Z",
+     "iopub.status.busy": "2021-08-14T00:35:08.870920Z",
+     "iopub.status.idle": "2021-08-14T00:35:08.875724Z",
+     "shell.execute_reply": "2021-08-14T00:35:08.875264Z"
+    },
+    "id": "HSb20FXc_V0U"
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "LookupError: gradient registry has no entry for: AdjustContrastv2\n"
+     ]
+    }
+   ],
+   "source": [
+    "image = tf.Variable([[[0.5, 0.0, 0.0]]])\n",
+    "delta = tf.Variable(0.1)\n",
+    "\n",
+    "with tf.GradientTape() as tape:\n",
+    "  new_image = tf.image.adjust_contrast(image, delta)\n",
+    "\n",
+    "try:\n",
+    "  print(tape.gradient(new_image, [image, delta]))\n",
+    "  assert False   # This should not happen.\n",
+    "except LookupError as e:\n",
+    "  print(f'{type(e).__name__}: {e}')\n"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "pDoutjzATiEm"
+   },
+   "source": [
+    "이 op를 통해 미분해야 하는 경우, 그래디언트를 구현하고 등록하거나(`tf.RegisterGradient` 사용) 다른 ops를 사용하여 함수를 다시 구현해야 합니다."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "GCTwc_dQXp2W"
+   },
+   "source": [
+    "## None 대신 0"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "TYDrVogA89eA"
+   },
+   "source": [
+    "연결되지 않은 그래디언트의 경우 `None` 대신 0을 가져오는 것이 편리한 경우가 있습니다. 연결되지 않은 그래디언트가 있을 때 `unconnected_gradients` 인수를 사용하여 반환할 항목을 결정할 수 있습니다."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 32,
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2021-08-14T00:35:08.880475Z",
+     "iopub.status.busy": "2021-08-14T00:35:08.879855Z",
+     "iopub.status.idle": "2021-08-14T00:35:08.884181Z",
+     "shell.execute_reply": "2021-08-14T00:35:08.883636Z"
+    },
+    "id": "U6zxk1sf9Ixx"
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "tf.Tensor([0. 0.], shape=(2,), dtype=float32)\n"
+     ]
+    }
+   ],
+   "source": [
+    "x = tf.Variable([2., 2.])\n",
+    "y = tf.Variable(3.)\n",
+    "\n",
+    "with tf.GradientTape() as tape:\n",
+    "  z = y**2\n",
+    "print(tape.gradient(z, x, unconnected_gradients=tf.UnconnectedGradients.ZERO))"
+   ]
+  }
+ ],
+ "metadata": {
+  "colab": {
+   "collapsed_sections": [
+    "Tce3stUlHN0L"
+   ],
+   "name": "autodiff.ipynb",
+   "toc_visible": true
+  },
+  "kernelspec": {
+   "display_name": "Python 3",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.7.5"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 0
+}
